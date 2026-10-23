@@ -179,6 +179,175 @@ pub(crate) fn pinch_factor(input: &egui::InputState) -> f32 {
         .fold(1.0, |acc, f| acc * f)
 }
 
+/// What a touchscreen's two-or-more-finger gesture asks of the camera in one frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TouchGesture {
+    /// Pinch factor (1 = fingers neither spread nor closed); above 1 zooms in.
+    pub zoom: f32,
+    /// How far the fingers' centre moved, in points. The model follows the fingers.
+    pub pan: egui::Vec2,
+}
+
+impl TouchGesture {
+    pub(crate) const NONE: Self = Self { zoom: 1.0, pan: egui::Vec2::ZERO };
+}
+
+/// The camera motion of a touchscreen gesture with two or more fingers (tablets and phones),
+/// from egui's multi-touch tracking. Non-finite or non-positive values count as no motion.
+pub(crate) fn touch_gesture(info: Option<egui::MultiTouchInfo>) -> TouchGesture {
+    let Some(info) = info.filter(|i| i.num_touches >= 2) else { return TouchGesture::NONE };
+    let zoom = if info.zoom_delta.is_finite() && info.zoom_delta > 0.0 { info.zoom_delta } else { 1.0 };
+    let pan = if info.translation_delta.is_finite() { info.translation_delta } else { egui::Vec2::ZERO };
+    TouchGesture { zoom, pan }
+}
+
+/// How long a first finger's press is held back, waiting to see if a second finger joins it.
+const TOUCH_GESTURE_WAIT: f64 = 0.15;
+/// How far (points) a lone finger moves before its press is let through as a drag.
+const TOUCH_SLOP: f32 = 8.0;
+/// At most this many fingers are tracked; more are ignored (hostile input stays bounded).
+const MAX_TOUCHES: usize = 10;
+
+/// Touchscreens send the first finger as the primary pointer too, so a two-finger pinch would
+/// also start a selection box or a geometry drag under that finger. The gate holds a finger's
+/// press back briefly: a lone finger (a tap, or a drag once it moves or rests) goes through
+/// unchanged, and a second finger turns the touch into a camera gesture whose pointer events are
+/// dropped until every finger is lifted. Mouse and pen input pass straight through.
+#[derive(Debug, Default)]
+pub(crate) struct TouchGate {
+    fingers: Vec<(egui::TouchDeviceId, egui::TouchId)>,
+    state: GateState,
+}
+
+#[derive(Debug, Default)]
+enum GateState {
+    #[default]
+    Idle,
+    /// A finger's press, withheld since `since`, with the moves seen after it.
+    Pending { press: egui::Event, origin: egui::Pos2, since: f64, last: Option<egui::Pos2> },
+    /// A lone finger's press went through: it selects or drags as a mouse would.
+    Passed,
+    /// Two or more fingers: the camera gesture owns the touch until all fingers lift.
+    Gesture,
+}
+
+impl TouchGate {
+    /// Rewrite one frame of raw input in place.
+    pub(crate) fn filter(&mut self, raw: &mut egui::RawInput) {
+        let now = raw.time.filter(|t| t.is_finite()).unwrap_or(0.0);
+        let touched = raw.events.iter().any(|e| matches!(e, egui::Event::Touch { .. }));
+        if !touched && self.fingers.is_empty() && matches!(self.state, GateState::Idle) {
+            return;
+        }
+        let events = std::mem::take(&mut raw.events);
+        let mut out = Vec::with_capacity(events.len() + 2);
+        for event in events {
+            match &event {
+                egui::Event::Touch { device_id, id, phase, .. } => {
+                    let key = (*device_id, *id);
+                    match phase {
+                        egui::TouchPhase::Start => {
+                            if !self.fingers.contains(&key) && self.fingers.len() < MAX_TOUCHES {
+                                self.fingers.push(key);
+                            }
+                        }
+                        egui::TouchPhase::End | egui::TouchPhase::Cancel => self.fingers.retain(|f| *f != key),
+                        egui::TouchPhase::Move => {}
+                    }
+                    if self.fingers.len() >= 2 && !matches!(self.state, GateState::Passed) {
+                        // The withheld press is dropped: it never happened as far as the UI knows.
+                        self.state = GateState::Gesture;
+                    }
+                    out.push(event);
+                }
+                egui::Event::PointerButton { button: egui::PointerButton::Primary, pressed, pos, .. } if self.touching() => {
+                    match (&mut self.state, *pressed) {
+                        (GateState::Idle, true) => {
+                            self.state = GateState::Pending { press: event.clone(), origin: *pos, since: now, last: None };
+                        }
+                        (GateState::Pending { press, last, .. }, false) => {
+                            // A tap: the press and its release go through together.
+                            out.push(egui::Event::PointerMoved(press_pos(press)));
+                            out.push(press.clone());
+                            if let Some(at) = last.take() {
+                                out.push(egui::Event::PointerMoved(at));
+                            }
+                            out.push(event);
+                            self.state = GateState::Idle;
+                        }
+                        (GateState::Gesture, _) => {}
+                        (GateState::Passed, false) => {
+                            out.push(event);
+                            self.state = GateState::Idle;
+                        }
+                        _ => out.push(event),
+                    }
+                }
+                egui::Event::PointerMoved(at) if self.touching() => match &mut self.state {
+                    GateState::Pending { origin, last, .. } => {
+                        *last = Some(*at);
+                        if at.distance(*origin) > TOUCH_SLOP {
+                            self.release_pending(&mut out);
+                        }
+                    }
+                    GateState::Gesture => {}
+                    _ => out.push(event),
+                },
+                _ => out.push(event),
+            }
+        }
+        if let GateState::Pending { since, .. } = self.state
+            && now - since >= TOUCH_GESTURE_WAIT
+        {
+            self.release_pending(&mut out);
+        }
+        if self.fingers.is_empty() {
+            match self.state {
+                GateState::Gesture => {
+                    // The fingers left the screen: no pointer hovers anything now.
+                    out.push(egui::Event::PointerGone);
+                    self.state = GateState::Idle;
+                }
+                GateState::Pending { .. } => self.release_pending(&mut out),
+                // Its release, if not in this frame, arrives with no finger down and passes.
+                GateState::Passed => self.state = GateState::Idle,
+                GateState::Idle => {}
+            }
+        }
+        raw.events = out;
+    }
+
+    /// A finger is on the screen, or a press it made is being held back.
+    fn touching(&self) -> bool {
+        !self.fingers.is_empty() || !matches!(self.state, GateState::Idle | GateState::Passed)
+    }
+
+    /// The lone finger keeps going: send its press (and where it has moved since) as a drag.
+    fn release_pending(&mut self, out: &mut Vec<egui::Event>) {
+        if let GateState::Pending { press, last, .. } = std::mem::take(&mut self.state) {
+            out.push(egui::Event::PointerMoved(press_pos(&press)));
+            out.push(press);
+            if let Some(at) = last {
+                out.push(egui::Event::PointerMoved(at));
+            }
+            self.state = GateState::Passed;
+        }
+    }
+
+    /// A press is waiting for the gesture window to pass: the app must draw another frame to
+    /// let it through even if the finger rests without moving.
+    pub(crate) fn waiting(&self) -> bool {
+        matches!(self.state, GateState::Pending { .. })
+    }
+}
+
+fn press_pos(press: &egui::Event) -> egui::Pos2 {
+    match press {
+        egui::Event::PointerButton { pos, .. } => *pos,
+        _ => egui::Pos2::ZERO,
+    }
+}
+
 /// Zoom anchor: the model point under the cursor, else the target's depth.
 /// Preferences › Navigation › Zoom to the cursor (off: toward the view's centre).
 pub(crate) fn zoom_anchor(app: &mut SolveApp, rect: egui::Rect, hover: Option<egui::Pos2>, surface: bool) -> Option<Vec3> {
@@ -417,13 +586,21 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     }
     let mut pan = if trackpad_pan { raw.pan } else { egui::Vec2::ZERO } + raw.mouse_pan;
     pan.x *= crate::prefs::pan_sign_x(app);
+    // Touchscreen: two fingers pinch to zoom and drag to pan, directly under the fingers, so
+    // the wheel and trackpad direction preferences do not apply.
+    let touch = touch_gesture(ui.input(|i| i.multi_touch()));
+    pan += touch.pan;
+    if app.touch_gate.waiting() {
+        // A resting finger's press is let through once the gesture window passes.
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(TOUCH_GESTURE_WAIT));
+    }
     let scroll = if app.viewport.wheel_zoom_raw_until_idle || (trackpad_pan && app.viewport.trackpad_until_idle) {
         raw.zoom + if trackpad_pan { 0.0 } else { raw.point_zoom }
     } else {
         scroll
     };
     // Pinch-to-zoom (trackpad): direct manipulation, never smoothed.
-    let pinch = ui.input(pinch_factor);
+    let pinch = ui.input(pinch_factor) * touch.zoom;
     let h = rect.height().max(1.0) as f64;
     if inside && pinch != 1.0 {
         app.viewport.orbit_free = None;
@@ -911,6 +1088,140 @@ mod tests {
         let mut input = egui::InputState::default();
         input.events = events;
         assert!((super::pinch_factor(&input) - 1.1).abs() < 1e-6);
+    }
+
+    fn multi_touch(num_touches: usize, zoom_delta: f32, translation_delta: egui::Vec2) -> egui::MultiTouchInfo {
+        egui::MultiTouchInfo {
+            start_time: 0.0,
+            start_pos: egui::Pos2::ZERO,
+            center_pos: egui::Pos2::ZERO,
+            num_touches,
+            zoom_delta,
+            zoom_delta_2d: egui::vec2(zoom_delta, zoom_delta),
+            rotation_delta: 0.0,
+            translation_delta,
+            force: 0.0,
+        }
+    }
+
+    #[test]
+    fn two_finger_touch_pinches_and_pans() {
+        use egui::vec2;
+        let g = super::touch_gesture(Some(multi_touch(2, 1.25, vec2(3.0, -4.0))));
+        assert_eq!(g, super::TouchGesture { zoom: 1.25, pan: vec2(3.0, -4.0) });
+        let g = super::touch_gesture(Some(multi_touch(3, 0.8, vec2(-1.0, 2.0))));
+        assert_eq!(g, super::TouchGesture { zoom: 0.8, pan: vec2(-1.0, 2.0) });
+    }
+
+    fn touch(id: u64, phase: egui::TouchPhase, at: egui::Pos2) -> egui::Event {
+        egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(id), phase, pos: at, force: None }
+    }
+
+    fn button(pressed: bool, at: egui::Pos2) -> egui::Event {
+        egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
+    }
+
+    fn gate_frame(gate: &mut super::TouchGate, time: f64, events: Vec<egui::Event>) -> Vec<egui::Event> {
+        let mut raw = egui::RawInput { time: Some(time), events, ..Default::default() };
+        gate.filter(&mut raw);
+        raw.events.into_iter().filter(|e| !matches!(e, egui::Event::Touch { .. })).collect()
+    }
+
+    fn presses(events: &[egui::Event]) -> usize {
+        events.iter().filter(|e| matches!(e, egui::Event::PointerButton { pressed: true, .. })).count()
+    }
+
+    #[test]
+    fn touch_gate_lets_a_tap_through() {
+        use egui::{TouchPhase::*, pos2};
+        let at = pos2(100.0, 100.0);
+        let mut gate = super::TouchGate::default();
+        let first = gate_frame(&mut gate, 0.0, vec![touch(1, Start, at), egui::Event::PointerMoved(at), button(true, at)]);
+        assert_eq!(presses(&first), 0, "the press waits for a second finger");
+        let tap = gate_frame(&mut gate, 0.05, vec![touch(1, End, at), button(false, at)]);
+        assert_eq!(presses(&tap), 1);
+        assert!(matches!(tap.last(), Some(egui::Event::PointerButton { pressed: false, .. })));
+        assert!(!gate.waiting());
+    }
+
+    #[test]
+    fn touch_gate_drops_the_press_of_a_two_finger_gesture() {
+        use egui::{TouchPhase::*, pos2};
+        let (a, b) = (pos2(100.0, 100.0), pos2(200.0, 100.0));
+        let mut gate = super::TouchGate::default();
+        let mut seen = gate_frame(&mut gate, 0.0, vec![touch(1, Start, a), egui::Event::PointerMoved(a), button(true, a)]);
+        seen.extend(gate_frame(&mut gate, 0.03, vec![touch(2, Start, b)]));
+        for i in 1..20 {
+            let d = i as f32 * 5.0;
+            seen.extend(gate_frame(
+                &mut gate,
+                0.03 + f64::from(i) * 0.02,
+                vec![
+                    touch(1, Move, pos2(100.0 - d, 100.0)),
+                    touch(2, Move, pos2(200.0 + d, 100.0)),
+                    egui::Event::PointerMoved(pos2(100.0 - d, 100.0)),
+                ],
+            ));
+        }
+        seen.extend(gate_frame(&mut gate, 0.5, vec![touch(1, End, a), touch(2, End, b), button(false, a)]));
+        assert_eq!(presses(&seen), 0);
+        assert!(!seen.iter().any(|e| matches!(e, egui::Event::PointerButton { .. })));
+        assert_eq!(seen.last(), Some(&egui::Event::PointerGone));
+        // The next lone tap is gated afresh and goes through.
+        gate_frame(&mut gate, 1.0, vec![touch(3, Start, a), button(true, a)]);
+        assert_eq!(presses(&gate_frame(&mut gate, 1.05, vec![touch(3, End, a), button(false, a)])), 1);
+    }
+
+    #[test]
+    fn touch_gate_lets_a_moving_or_resting_finger_drag() {
+        use egui::{TouchPhase::*, pos2};
+        let at = pos2(100.0, 100.0);
+        let mut gate = super::TouchGate::default();
+        gate_frame(&mut gate, 0.0, vec![touch(1, Start, at), button(true, at)]);
+        let moved = gate_frame(&mut gate, 0.02, vec![touch(1, Move, pos2(120.0, 100.0)), egui::Event::PointerMoved(pos2(120.0, 100.0))]);
+        assert_eq!(presses(&moved), 1);
+        assert_eq!(moved.last(), Some(&egui::Event::PointerMoved(pos2(120.0, 100.0))));
+        let released = gate_frame(&mut gate, 0.3, vec![touch(1, End, at), button(false, at)]);
+        assert!(matches!(released.as_slice(), [egui::Event::PointerButton { pressed: false, .. }]));
+
+        let mut gate = super::TouchGate::default();
+        gate_frame(&mut gate, 0.0, vec![touch(1, Start, at), button(true, at)]);
+        assert!(gate.waiting());
+        assert_eq!(presses(&gate_frame(&mut gate, 0.2, vec![])), 1, "a resting finger is let through");
+        assert!(!gate.waiting());
+    }
+
+    #[test]
+    fn touch_gate_leaves_mouse_input_alone() {
+        use egui::pos2;
+        let at = pos2(10.0, 10.0);
+        let mut gate = super::TouchGate::default();
+        let events = vec![egui::Event::PointerMoved(at), button(true, at), egui::Event::PointerMoved(pos2(11.0, 10.0)), button(false, at)];
+        assert_eq!(gate_frame(&mut gate, 0.0, events.clone()), events);
+    }
+
+    #[test]
+    fn touch_gate_bounds_hostile_touch_streams() {
+        use egui::{TouchPhase::*, pos2};
+        let mut gate = super::TouchGate::default();
+        let starts = (0..1000).map(|i| touch(i, Start, pos2(f32::NAN, f32::INFINITY))).collect();
+        gate_frame(&mut gate, f64::NAN, starts);
+        assert!(gate.fingers.len() <= super::MAX_TOUCHES);
+        let ends = (0..1000).map(|i| touch(i, Cancel, pos2(0.0, 0.0))).collect();
+        gate_frame(&mut gate, 0.1, ends);
+        assert!(gate.fingers.is_empty());
+    }
+
+    #[test]
+    fn touch_gesture_ignores_one_finger_and_hostile_values() {
+        use egui::vec2;
+        assert_eq!(super::touch_gesture(None), super::TouchGesture::NONE);
+        assert_eq!(super::touch_gesture(Some(multi_touch(1, 1.5, vec2(5.0, 5.0)))), super::TouchGesture::NONE);
+        for zoom in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(super::touch_gesture(Some(multi_touch(2, zoom, vec2(1.0, 1.0)))).zoom, 1.0);
+        }
+        let g = super::touch_gesture(Some(multi_touch(2, 1.0, vec2(f32::NAN, 1.0))));
+        assert_eq!(g.pan, egui::Vec2::ZERO);
     }
 
     #[test]

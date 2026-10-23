@@ -479,6 +479,8 @@ pub struct SolveApp {
     /// The viewport's frame-rate readout ([`frame_rate`]).
     pub frame_rate: frame_rate::FrameRate,
     pub synthetic: Vec<egui::Event>,
+    /// Keeps a touchscreen's emulated pointer out of two-finger camera gestures.
+    pub(crate) touch_gate: navigation::TouchGate,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
     control_rx: Option<Receiver<ControlRequest>>,
@@ -600,6 +602,7 @@ impl SolveApp {
             frame_ms: 0.0,
             frame_rate: frame_rate::FrameRate::default(),
             synthetic: Vec::new(),
+            touch_gate: navigation::TouchGate::default(),
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
             agent_chat: Default::default(),
@@ -1538,6 +1541,7 @@ impl SolveApp {
 
     /// Inject synthetic events (one pointer event per frame).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        self.touch_gate.filter(raw);
         if self.synthetic.is_empty() {
             return;
         }
