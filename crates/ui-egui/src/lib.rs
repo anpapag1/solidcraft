@@ -237,6 +237,7 @@ pub mod tool_modifiers;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
+pub mod touch;
 pub mod ui_kit;
 #[cfg(test)]
 mod ui_kit_guard_tests;
@@ -479,8 +480,8 @@ pub struct SolveApp {
     /// The viewport's frame-rate readout ([`frame_rate`]).
     pub frame_rate: frame_rate::FrameRate,
     pub synthetic: Vec<egui::Event>,
-    /// Keeps a touchscreen's emulated pointer out of two-finger camera gestures.
-    pub(crate) touch_gate: navigation::TouchGate,
+    /// Touchscreens and pens ([`touch`]).
+    pub touch: touch::Touch,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
     control_rx: Option<Receiver<ControlRequest>>,
@@ -602,7 +603,7 @@ impl SolveApp {
             frame_ms: 0.0,
             frame_rate: frame_rate::FrameRate::default(),
             synthetic: Vec::new(),
-            touch_gate: navigation::TouchGate::default(),
+            touch: touch::Touch::default(),
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
             agent_chat: Default::default(),
@@ -1539,9 +1540,26 @@ impl SolveApp {
         }
     }
 
+    /// Pen and finger input from a platform that tells them apart (the browser), turned into
+    /// this frame's events ([`touch`]). Call it every frame, before [`Self::raw_input_hook`],
+    /// even with no events: it also delivers a finger tap's click over the following frames.
+    pub fn device_input(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput, events: Vec<touch::DeviceEvent>) {
+        let covered = shell::covered_rects(self);
+        let (rect, layer, controls) = (self.touch.camera_rect, self.touch.camera_layer, self.touch.camera_controls.clone());
+        let camera_at = |p: egui::Pos2| {
+            rect.is_some_and(|r| r.contains(p))
+                && !covered.iter().chain(&controls).any(|c| c.contains(p))
+                && layer.is_none_or(|l| ctx.layer_id_at(p).is_none_or(|at| at == l))
+        };
+        self.touch.device_input(raw, events, &camera_at);
+        if self.touch.waiting() {
+            ctx.request_repaint();
+        }
+    }
+
     /// Inject synthetic events (one pointer event per frame).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
-        self.touch_gate.filter(raw);
+        self.touch.emulated_input(raw);
         if self.synthetic.is_empty() {
             return;
         }

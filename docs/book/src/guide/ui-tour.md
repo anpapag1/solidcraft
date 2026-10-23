@@ -21,7 +21,7 @@
 - **Viewport.** Click to select, Shift or Ctrl to add (Preferences › Selection), drag for a window or crossing box. While sketching, Ctrl/Cmd or Alt/Option suppress auto-snap by default; Shift prefers a midpoint. To
   reach something under something else (two lines drawn on top of each other, coincident points,
   an edge in front of a face, overlapping bodies), hold the left button still for half a second
-  (long-press on a touch screen) or right-click › **Select Other…**: a list of everything under
+  or right-click › **Select Other…** (on a touchscreen or with a pen, hold still for the menu): a list of everything under
   the cursor opens there, the sketch being edited first. Hovering a row lights it up; clicking it
   selects it (Shift or Ctrl adds), and in a command's dialog it goes to the active selection box.
   Esc or a click elsewhere closes the list. Clicking again on the same spot, with nothing changed
@@ -30,6 +30,7 @@
   preset in Preferences switches to SolidWorks, Inventor, Alias, Blender, Tinkercad, OpenSCAD or Touchpad style). On a
   trackpad, pinch zooms and two-finger scroll pans (Navigation › Two-finger scroll pans;
   off: scroll zooms like the wheel); mouse wheels zoom and the thumb wheel pans sideways.
+  On a touchscreen or tablet, see **Touchscreens and pens** below.
   Shift+middle orbits freely
   in the default and Inventor presets. In every preset, Ctrl+left drag (Cmd on macOS) that starts
   on empty space orbits; a Ctrl+click still adds to the selection. Shift+right-drag snaps to the nearest standard or
@@ -183,3 +184,23 @@ lightly damped spring transition and a small boundary margin to prevent flicker.
 On desktop, Ctrl/Cmd+Plus (or Equals) enlarges the interface, Ctrl/Cmd+Minus reduces it,
 and Ctrl/Cmd+0 restores 100%. These shortcuts update the UI scale preference. The UI scale
 slider in Preferences applies the new layout when released, so it stays still while dragging.
+
+## Touchscreens and pens
+
+On a tablet or touchscreen (in the browser, a pen and fingers are told apart):
+
+- **Pen:** it is the mouse. Hover lights things up, a tap clicks, drag to draw or box-select.
+  The barrel button, or holding the pen still for a moment, opens the right-click menu (whose
+  **Select Other…** lists everything under it). While the pen is on or near the screen, a palm
+  resting on it is ignored.
+- **Fingers in the 3D view:** one finger orbits (pans a flat page), two fingers pan and pinch to
+  zoom. A two-finger tap undoes, a three-finger tap redoes. A one-finger tap selects until you
+  first use a pen; after that fingers only move the camera, so a hand on the screen never picks
+  anything.
+- **Fingers elsewhere** (toolbar, panels, menus, dialogs, the view cube and the navigation bar):
+  a finger is the mouse. Hold it on a control for that control's menu.
+- **Larger controls:** while you use touch or a pen, the interface is drawn larger, and returns
+  to its size when you use the mouse (Preferences › Interface › Larger controls for touch and
+  pen).
+
+In the desktop app a pen counts as a finger, as the system reports it.

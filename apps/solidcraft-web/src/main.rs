@@ -16,6 +16,8 @@ mod files;
 mod install;
 #[cfg(any(target_arch = "wasm32", test))]
 mod space_mouse;
+#[cfg(target_arch = "wasm32")]
+mod touch;
 
 /// The browser switches tabs with Ctrl+Tab and Ctrl+Shift+Tab, so the page leaves those keys to
 /// it (#5227); plain Tab and Shift+Tab still move between the app's fields. (Ctrl+PageUp and
@@ -132,6 +134,8 @@ mod web {
         font_language: String,
         space_mouse: SpaceMouse,
         wheel_gestures: solidcraft_ui_egui::WebWheelGestures,
+        /// Pens and fingers, told apart from the mouse (`touch`).
+        devices: crate::touch::Queue,
     }
 
     impl Shell {
@@ -514,6 +518,8 @@ mod web {
             if let Some(delay) = self.wheel_gestures.update(raw, now) {
                 ctx.request_repaint_after(delay);
             }
+            let devices = std::mem::take(&mut *self.devices.borrow_mut());
+            self.app.device_input(ctx, raw, devices);
             files::take_drops(&self.files, raw);
             // Before the app's own hook, which adds the control channel's events.
             self.space_mouse.raw_input_hook(ctx, self.app.preferences.space_mouse_enabled, raw);
@@ -592,6 +598,7 @@ mod web {
             {
                 create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
             }
+            let touch_canvas = canvas.clone();
             let result = eframe::WebRunner::new()
                 .start(
                     canvas,
@@ -664,6 +671,10 @@ mod web {
                         }
                         let api = Api::install(sender, cc.egui_ctx.clone()).map_err(|e| format!("SolidCraft browser API: {e:?}"))?;
                         let font_language = app.preferences.language.clone();
+                        let devices = match web_sys::window() {
+                            Some(window) => crate::touch::install(&window, &touch_canvas, &cc.egui_ctx),
+                            None => Default::default(),
+                        };
                         Ok(Box::new(Shell {
                             app,
                             api,
@@ -679,6 +690,7 @@ mod web {
                             font_language,
                             space_mouse: SpaceMouse::default(),
                             wheel_gestures: solidcraft_ui_egui::WebWheelGestures::default(),
+                            devices,
                         }))
                     }),
                 )

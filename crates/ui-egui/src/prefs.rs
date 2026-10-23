@@ -497,6 +497,8 @@ preference_settings! {
     ribbon_labels: bool = true, PAGE_INTERFACE;
     /// Interface scale (1 = 100 %).
     ui_scale: f32 = 1.0, PAGE_INTERFACE, accept(0.5..=2.5);
+    /// Draw controls larger while a touchscreen or pen is in use (until the mouse is used).
+    touch_controls: bool = true, PAGE_INTERFACE => check("Larger controls for touch and pen", "Buttons and fields grow while you use a touchscreen or pen, and return to normal when you use the mouse");
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
     /// (#1290). Menus, dialogs and labels use it; glyphs it lacks fall back as before.
     ui_font: String = String::new(), PAGE_INTERFACE;
@@ -933,10 +935,17 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // Scaling while the pointer is held moves the slider under the pointer, feeding a
     // different value back into it. Commit the layout change after the drag ends.
-    let z = app.preferences.ui_scale.clamp(0.5, 2.5);
-    if z.is_finite() && !ctx.input(|i| i.pointer.any_down()) && (ctx.zoom_factor() - z).abs() > 1e-3 {
+    let z = app.preferences.ui_scale.clamp(0.5, 2.5) * touch_scale(app);
+    // Not while a finger is down either: the scale changes where everything is under it.
+    let held = ctx.input(|i| i.pointer.any_down() || i.any_touches()) || app.touch.camera_active();
+    if z.is_finite() && !held && (ctx.zoom_factor() - z).abs() > 1e-3 {
         ctx.set_zoom_factor(z);
     }
+}
+
+/// How much larger controls are drawn for touch (1: not in use, or turned off).
+pub(crate) fn touch_scale(app: &SolveApp) -> f32 {
+    if app.preferences.touch_controls && app.touch.in_use { crate::touch::TOUCH_SCALE } else { 1.0 }
 }
 
 /// A new, empty design takes the preferred units (not an undo step, not a change to save).

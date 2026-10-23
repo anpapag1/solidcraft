@@ -40,7 +40,10 @@ Mouse and touch:
 |---|---|
 | Click | select (Shift or Ctrl adds) |
 | Click again on the same spot | select the next thing under the cursor (click cycling) |
-| Hold the left button still (long-press on touch), or right-click › Select Other… | list everything under the cursor to pick from |
+| Hold the left button still, or right-click › Select Other… | list everything under the cursor to pick from |
+| Touchscreen: one finger in the 3D view / two fingers | orbit / pan and pinch to zoom |
+| Touchscreen: two-finger tap / three-finger tap | undo / redo |
+| Pen: barrel button, or hold the pen (or a finger on a control) still | right-click menu |
 | Double-click a sketch curve or edge | select its chain or tangent loop |
 | Double-click the middle button | go Home: the home view, framing everything shown (Preferences › Navigation › Middle double-click: Home, Fit or Off) |
 

@@ -413,7 +413,10 @@ pub fn track_hold(
         && !is_open(app)
         && app.dialog.as_ref().is_none_or(|d| d.wants_picks())
         && app.viewport.point_drag.is_none();
-    if pressed && inside && free && !navigating {
+    // On a touchscreen or with a pen, holding still is a right click instead (its menu has
+    // Select Other…): egui opens it for a touch held still (crate::touch).
+    let touching = ctx.input(|i| i.any_touches());
+    if pressed && inside && free && !navigating && !touching {
         app.viewport.select_other.hold = hover.map(|p| (p, now));
     }
     let mut opened = false;
