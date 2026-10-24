@@ -10,6 +10,7 @@ use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, vec2};
 use solidcraft_engine::geom::{Ring, Vec3};
 
 use crate::theme::Tokens;
+use crate::touch::Sizes;
 use crate::viewport::{Proj, projected_polygon};
 
 /// A part of the triad.
@@ -206,17 +207,17 @@ fn shapes(proj: &Proj, t: &Triad, l: f64) -> Option<Shapes> {
     Some(s)
 }
 
-fn hit(s: &Shapes, p: Pos2) -> Option<Handle> {
-    if s.ball.distance(p) < 9.0 {
+fn hit(s: &Shapes, p: Pos2, size: &Sizes) -> Option<Handle> {
+    if s.ball.distance(p) < size.ball {
         return Some(Handle::Ball);
     }
-    if let Some((i, ..)) = s.arrows.iter().find(|(_, a, b)| seg_dist(p, *a, *b) < 6.0) {
+    if let Some((i, ..)) = s.arrows.iter().find(|(_, a, b)| seg_dist(p, *a, *b) < size.arrow) {
         return Some(Handle::Axis(*i));
     }
     if let Some((i, _)) = s.planes.iter().find(|(_, q)| in_quad(p, q)) {
         return Some(Handle::Plane(*i));
     }
-    s.rings.iter().find(|(_, pts)| pts.windows(2).any(|w| seg_dist(p, w[0], w[1]) < 5.0)).map(|(i, _)| Handle::Ring(*i))
+    s.rings.iter().find(|(_, pts)| pts.windows(2).any(|w| seg_dist(p, w[0], w[1]) < size.ring)).map(|(i, _)| Handle::Ring(*i))
 }
 
 /// Millimetres per screen pixel at a point.
@@ -238,12 +239,13 @@ pub(crate) fn cancel(ctx: &egui::Context, id: egui::Id) {
 }
 
 /// Hit-test before registering the dynamic egui drag widget or changing the camera.
-pub(crate) fn contains_pointer(proj: &Proj, t: &Triad, p: Pos2) -> bool {
-    mm_per_px(proj, t.center).and_then(|scale| shapes(proj, t, scale * LEN_PX)).is_some_and(|sh| hit(&sh, p).is_some())
+pub(crate) fn contains_pointer(proj: &Proj, t: &Triad, p: Pos2, size: &Sizes) -> bool {
+    mm_per_px(proj, t.center).and_then(|scale| shapes(proj, t, scale * LEN_PX)).is_some_and(|sh| hit(&sh, p, size).is_some())
 }
 
-/// Draw the triad and run a drag on it. `step` is the distance snap step.
-pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::Id, t: &Triad, step: f64) -> Option<Drag> {
+/// Draw the triad and run a drag on it. `step` is the distance snap step; `size` how far from a
+/// handle it still grabs it, and how big the ball is drawn (bigger for touch and pen).
+pub(crate) fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::Id, t: &Triad, step: f64, size: &Sizes) -> Option<Drag> {
     let tk = Tokens::get();
     let l = mm_per_px(proj, t.center)? * LEN_PX;
     LAST.with(|x| *x.borrow_mut() = Some((t.center, l)));
@@ -256,7 +258,7 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
     }
     let state: Option<State> = ui.data(|d| d.get_temp(id));
     let pointer = ui.input(|i| i.pointer.hover_pos());
-    let hovered = if state.is_none() { pointer.filter(|_| ui.rect_contains_pointer(proj.rect)).and_then(|p| hit(&sh, p)) } else { None };
+    let hovered = if state.is_none() { pointer.filter(|_| ui.rect_contains_pointer(proj.rect)).and_then(|p| hit(&sh, p, size)) } else { None };
     let active = state.map(|s| s.handle).or(hovered);
     let hot = |h: Handle| active == Some(h);
     let col = |h: Handle, i: usize| if hot(h) { tk.accent } else { tk.gizmo[i.min(2)] };
@@ -271,7 +273,7 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
         arrow(painter, *a, *b, col(Handle::Axis(*i), *i), hot(Handle::Axis(*i)));
     }
     let bc = if hot(Handle::Ball) { tk.accent } else { Color32::from_gray(235) };
-    painter.circle(sh.ball, 6.0, bc, Stroke::new(1.5, Color32::from_gray(60)));
+    painter.circle(sh.ball, 6.0 * size.dot, bc, Stroke::new(1.5, Color32::from_gray(60)));
     let p = pointer?;
     active?;
     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
@@ -437,6 +439,31 @@ mod tests {
             }
         }
         assert!(worst <= limit, "a vertex {worst} px from the centre (limit {limit})");
+    }
+
+    /// A finger or pen grabs the ball and the arrows from further away than a mouse does.
+    #[test]
+    fn touch_grabs_the_ball_and_arrows_from_further_away() {
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let t = Triad { center: Vec3::ZERO, translate: true, rotate: true };
+        let cam = solidcraft_engine::render::Camera::default().looking_from(crate::viewport::orbit_directions().next().unwrap());
+        let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
+        let l = mm_per_px(&proj, t.center).unwrap() * LEN_PX;
+        let sh = shapes(&proj, &t, l).unwrap();
+        let (mouse, touch) = (Sizes::MOUSE, Sizes::TOUCH);
+        // 12 px from the ball in any direction: a miss of the ball for a mouse, the ball for touch.
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::FRAC_PI_4;
+            let p = sh.ball + vec2(a.cos(), a.sin()) * 12.0;
+            assert_ne!(hit(&sh, p, &mouse), Some(Handle::Ball), "mouse, direction {k}");
+            assert_eq!(hit(&sh, p, &touch), Some(Handle::Ball), "touch, direction {k}");
+        }
+        // 10 px beside the middle of an arrow: no arrow for a mouse, an arrow for touch.
+        let (i, a, b) = sh.arrows[0];
+        let along = (b - a).normalized();
+        let beside = a.lerp(b, 0.5) + vec2(-along.y, along.x) * 10.0;
+        assert_ne!(hit(&sh, beside, &mouse), Some(Handle::Axis(i)), "mouse");
+        assert!(matches!(hit(&sh, beside, &touch), Some(Handle::Axis(_))), "touch: {:?}", hit(&sh, beside, &touch));
     }
 
     #[test]

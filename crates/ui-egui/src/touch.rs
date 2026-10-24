@@ -181,6 +181,83 @@ impl Touch {
     pub(crate) fn waiting(&self) -> bool {
         !self.router.later.is_empty() || self.gate.waiting()
     }
+
+    /// How big handles are and how far from one a press still grabs it, now.
+    pub(crate) fn sizes(&self) -> Sizes {
+        if self.in_use { Sizes::TOUCH } else { Sizes::MOUSE }
+    }
+}
+
+/// How far (points) from a handle a press still grabs it, and how big the handles are drawn.
+/// A mouse keeps the sizes the app always had; while touch or a pen is in use
+/// ([`Touch::in_use`]) the handles are bigger, so a fingertip or a pen held a little off still
+/// lands on them. The rest of the interface is not scaled.
+///
+/// Every distance is in points from the handle's centre (a point) or its line (a curve, an edge).
+/// A point wins over a line within reach of both, because the picker lists points first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Sizes {
+    /// A sketch point.
+    pub point: f32,
+    /// An end point of a model edge.
+    pub vertex: f32,
+    /// A sketch curve.
+    pub curve: f32,
+    /// A model edge.
+    pub edge: f32,
+    /// An origin or construction axis.
+    pub axis: f32,
+    /// The centre ball, the arrows and the rings of the move triad.
+    pub ball: f32,
+    pub arrow: f32,
+    pub ring: f32,
+    /// The corners and the rotation knob of a text's frame.
+    pub frame: f32,
+    /// Factor on the dots drawn for points (1: as drawn for a mouse).
+    pub dot: f32,
+    /// Radius of the halo round the point under the pointer, and of its press highlight
+    /// (0: none).
+    pub halo: f32,
+    /// Extra width (points) of the highlight under a hovered curve or edge (0: none).
+    pub line_halo: f32,
+}
+
+impl Sizes {
+    pub(crate) const MOUSE: Self = Self {
+        point: 8.0,
+        vertex: 7.0,
+        curve: 6.0,
+        edge: 6.0,
+        axis: 5.0,
+        ball: 9.0,
+        arrow: 6.0,
+        ring: 5.0,
+        frame: 8.0,
+        dot: 1.0,
+        halo: 0.0,
+        line_halo: 0.0,
+    };
+
+    pub(crate) const TOUCH: Self = Self {
+        point: 20.0,
+        vertex: 18.0,
+        curve: 12.0,
+        edge: 12.0,
+        axis: 10.0,
+        ball: 16.0,
+        arrow: 14.0,
+        ring: 12.0,
+        frame: 20.0,
+        dot: 1.8,
+        halo: 14.0,
+        line_halo: 6.0,
+    };
+
+    /// The farthest any pick reaches: the picker looks this far round the pointer, then applies
+    /// each kind's own distance.
+    pub(crate) fn widest(&self) -> f32 {
+        self.point.max(self.vertex).max(self.curve).max(self.edge).max(self.axis)
+    }
 }
 
 /// What one finger touch is doing.
@@ -1157,5 +1234,45 @@ mod tests {
         f.frame(vec![finger(1, TouchPhase::End, c.x - 30.0, c.y), finger(2, TouchPhase::End, c.x + 30.0, c.y)]);
         f.frame(vec![]);
         assert_ne!(f.h.app.session.revision, revision, "the tap undid the last step");
+    }
+
+    /// Touch and pen get bigger handles and wider grab areas; a mouse keeps the sizes the app
+    /// always had, and a point reaches further than a line so it wins where both are in reach.
+    #[test]
+    fn touch_and_pen_get_bigger_handles_and_a_mouse_keeps_its_own() {
+        use super::Sizes;
+        let mut t = Touch::default();
+        assert_eq!(t.sizes(), Sizes::MOUSE);
+        t.in_use = true;
+        assert_eq!(t.sizes(), Sizes::TOUCH);
+        t.in_use = false;
+        assert_eq!(t.sizes(), Sizes::MOUSE, "using the mouse again brings the old sizes back");
+        let (m, f) = (Sizes::MOUSE, Sizes::TOUCH);
+        // What the picker, the triad and the text frame used before.
+        assert_eq!((m.point, m.vertex, m.curve, m.edge, m.axis), (8.0, 7.0, 6.0, 6.0, 5.0));
+        assert_eq!((m.ball, m.arrow, m.ring, m.frame), (9.0, 6.0, 5.0, 8.0));
+        assert_eq!((m.dot, m.halo, m.line_halo), (1.0, 0.0, 0.0), "a mouse draws no halo and the dots as always");
+        for (mouse, touch, what) in [
+            (m.point, f.point, "point"),
+            (m.vertex, f.vertex, "vertex"),
+            (m.curve, f.curve, "curve"),
+            (m.edge, f.edge, "edge"),
+            (m.axis, f.axis, "axis"),
+            (m.ball, f.ball, "ball"),
+            (m.arrow, f.arrow, "arrow"),
+            (m.ring, f.ring, "ring"),
+            (m.frame, f.frame, "frame"),
+        ] {
+            assert!(touch > mouse, "{what}: {touch} should exceed {mouse}");
+        }
+        assert!(f.dot > 1.0 && f.halo > 0.0 && f.line_halo > 0.0);
+        assert!(f.point > f.curve && f.vertex > f.edge, "a point wins over a line in reach of both");
+        // The picker looks this far round the pointer.
+        assert_eq!(m.widest(), 8.0);
+        assert_eq!(f.widest(), f.point);
+        // Each size is finite and bounded.
+        for v in [f.point, f.vertex, f.curve, f.edge, f.axis, f.ball, f.arrow, f.ring, f.frame, f.dot, f.halo, f.line_halo] {
+            assert!(v.is_finite() && v > 0.0 && v < 100.0, "{v}");
+        }
     }
 }

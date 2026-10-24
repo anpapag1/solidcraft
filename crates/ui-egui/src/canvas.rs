@@ -269,10 +269,11 @@ pub(crate) fn chamfer_face_dirs(app: &SolveApp, d: &Dialog, at: Vec3) -> Option<
 pub(crate) fn owns_pointer(app: &SolveApp, proj: &Proj, p: Pos2) -> bool {
     // The triad only registers an egui hit widget after a handle is under the pointer.
     // Test its geometry before navigation, including the first frame entering a handle.
-    app.dialog.as_ref().and_then(|d| crate::dialogs_move::triad(app, d)).is_some_and(|t| crate::gizmo::contains_pointer(proj, &t, p))
+    let size = app.touch.sizes();
+    app.dialog.as_ref().and_then(|d| crate::dialogs_move::triad(app, d)).is_some_and(|t| crate::gizmo::contains_pointer(proj, &t, p, &size))
         || (app.dialog.is_none()
             && app.tool.is_none()
-            && crate::browser::occurrence_triad_model(app).is_some_and(|t| crate::gizmo::contains_pointer(proj, &t, p)))
+            && crate::browser::occurrence_triad_model(app).is_some_and(|t| crate::gizmo::contains_pointer(proj, &t, p, &size)))
 }
 
 /// Draw the manipulator and the value box (called by the viewport after the model is drawn).
@@ -306,7 +307,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
     if matches!(d.kind, Kind::Move { .. }) {
         let mut dragging = false;
         if let Some(t) = crate::dialogs_move::triad(app, &d)
-            && let Some(g) = crate::gizmo::show(ui, painter, proj, egui::Id::new("sc_move_triad"), &t, snap_step(app.cam.half_height()))
+            && let Some(g) =
+                crate::gizmo::show(ui, painter, proj, egui::Id::new("sc_move_triad"), &t, snap_step(app.cam.half_height()), &app.touch.sizes())
         {
             crate::dialogs_move::drag(app, &mut d, g);
             dragging = true;

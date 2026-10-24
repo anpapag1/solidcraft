@@ -1384,6 +1384,8 @@ pub(crate) fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit
     app.session.visibility.hidden_occurrences.hash(&mut h);
     origin_point_shown(app).hash(&mut h);
     app.perspective_view().hash(&mut h);
+    // Touch and pen picks reach further than the mouse's.
+    app.touch.in_use.hash(&mut h);
     (proj.rect.width().to_bits(), proj.rect.height().to_bits()).hash(&mut h);
     crate::sketch_display::projection_key(proj, app.viewport.pixels_per_point()).hash(&mut h);
     let key = h.finish();
@@ -1478,6 +1480,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let bounds = body_bounds(app, &st);
     let mut hits = Vec::new();
     let (o, d) = proj.ray(pos);
+    // How far from the cursor each kind is still picked: bigger while touch or a pen is in use.
+    // The kinds are collected points first, so a point wins over a line within reach of both.
+    let size = app.touch.sizes();
     // Sketch points of the active sketch (of every shown sketch while a command takes points,
     // while idle or projecting, and while 3D drawing snaps to points on other visible sketches).
     let wants_points = app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| i.accept & crate::selection::POINTS != 0);
@@ -1498,7 +1503,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             }
             if let Some(sp) = proj.to_screen(ss.plane.to_world(p.pos)) {
                 let dd = sp.distance(pos) - if s.active_sketch == Some(sid) { 2.0 } else { 0.0 };
-                if dd < 8.0 && best.wants(dd) {
+                if dd < size.point && best.wants(dd) {
                     best.offer(dd, Hit::SketchPoint { sketch: sid, id: p.id.clone(), at: p.pos });
                 }
             }
@@ -1519,7 +1524,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
                 let pts: Vec<Pos2> = part.iter().filter_map(|q| proj.to_screen(*q)).collect();
                 for w in pts.windows(2) {
                     let dd = seg_dist(pos, w[0], w[1]) - bonus;
-                    if dd < 6.0 && bestc.wants(dd) {
+                    if dd < size.curve && bestc.wants(dd) {
                         bestc.offer(dd, Hit::SketchCurve { sketch: sid, id: c.id.clone(), straight });
                     }
                 }
@@ -1530,7 +1535,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             let pts: Vec<Pos2> = w.pts.iter().filter_map(|q| proj.to_screen(*q)).collect();
             for seg in pts.windows(2) {
                 let dd = seg_dist(pos, seg[0], seg[1]) - bonus;
-                if dd < 6.0 && bestc.wants(dd) {
+                if dd < size.curve && bestc.wants(dd) {
                     bestc.offer(dd, Hit::SketchCurve { sketch: sid, id: w.id.clone(), straight: false });
                 }
             }
@@ -1574,8 +1579,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     // Wireframe draws no faces, so nothing hides an edge or a vertex.
     let wireframe = app.ui.visual_style == 2;
     let visible = |p: Vec3| wireframe || bestf.as_ref().is_none_or(|(t, _)| (p - o).dot(d) <= *t + slack);
-    // Vertices (edge end points) and edges, within 7 and 6 points of the cursor.
-    let reach = crate::pick_index::reach(proj, pos, 8.0);
+    // Vertices (edge end points) and edges, within `size.vertex` and `size.edge` points of the
+    // cursor (7 and 6 for a mouse).
+    let reach = crate::pick_index::reach(proj, pos, size.widest());
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
     for (i, b) in st.bodies.iter().enumerate() {
@@ -1584,7 +1590,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         }
         // Only bodies whose outline on screen is near the cursor can have an edge under it.
         if let Some((_, bb)) = bounds.get(i)
-            && screen_box(proj, bb, 8.0).is_some_and(|r| !r.contains(pos))
+            && screen_box(proj, bb, size.widest()).is_some_and(|r| !r.contains(pos))
         {
             continue;
         }
@@ -1607,7 +1613,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
                 for v in [e.first(), e.last()].into_iter().flatten().map(|v| at(*v)) {
                     if let Some(sp) = proj.to_screen(v) {
                         let dd = sp.distance(pos);
-                        if dd < 7.0 && visible(v) && bestv.wants(dd) {
+                        if dd < size.vertex && visible(v) && bestv.wants(dd) {
                             bestv.offer(dd, Hit::Vertex { body: b.name.clone(), point: v });
                         }
                     }
@@ -1618,7 +1624,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             let dd = seg_dist(pos, a, c);
             // Visible where the cursor is: the edge's point under the cursor, not an end or
             // the middle, which can lie deeper than the face the cursor is on.
-            if dd < 6.0 && beste.wants(dd) && visible(ray_segment_closest(o, d, p0, p1)) {
+            if dd < size.edge && beste.wants(dd) && visible(ray_segment_closest(o, d, p0, p1)) {
                 beste.offer(dd, Hit::Edge { body: b.name.clone(), index: ei, mid: at(polyline_mid(e)) });
             }
         }
@@ -1629,19 +1635,19 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         && let Some(sp) = proj.to_screen(Vec3::ZERO)
     {
         let dd = sp.distance(pos);
-        if dd < 7.0 && bestv.wants(dd) {
+        if dd < size.vertex && bestv.wants(dd) {
             bestv.offer(dd, Hit::Vertex { body: String::new(), point: Vec3::ZERO });
         }
     }
     hits.extend(bestv.hits());
     hits.extend(beste.hits());
     // Origin axes.
-    let size = origin_size(app.cam.half_height());
+    let axes_size = origin_size(app.cam.half_height());
     let mut besta = Near::new(all);
     for (name, dir) in origin_axes(app) {
-        if let (Some(a), Some(b)) = (proj.to_screen(Vec3::ZERO), proj.to_screen(dir * (size * AXIS_LEN))) {
+        if let (Some(a), Some(b)) = (proj.to_screen(Vec3::ZERO), proj.to_screen(dir * (axes_size * AXIS_LEN))) {
             let dd = seg_dist(pos, a, b);
-            if dd < 5.0 && besta.wants(dd) {
+            if dd < size.axis && besta.wants(dd) {
                 besta.offer(dd, Hit::Axis { name: name.into() });
             }
         }
@@ -1650,7 +1656,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     for (name, a, b) in construction_axis_segments(app) {
         if let (Some(a), Some(b)) = (proj.to_screen(a), proj.to_screen(b)) {
             let dd = seg_dist(pos, a, b);
-            if dd < 5.0 && besta.wants(dd) {
+            if dd < size.axis && besta.wants(dd) {
                 besta.offer(dd, Hit::Axis { name });
             }
         }
@@ -2179,6 +2185,8 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     (std::sync::Arc::as_ptr(&crate::open_meshing::shown_world(app)) as usize).hash(&mut h);
     serde_json::to_string(&selected).unwrap_or_default().hash(&mut h);
     hover_drawn(&app.viewport.hover).hash(&mut h);
+    // A hovered edge is drawn wider while touch or a pen is in use.
+    app.touch.in_use.hash(&mut h);
     app.viewport.hover_feature.hash(&mut h);
     app.viewport.hover_bodies.hash(&mut h);
     // Which mesh lights a face follows how the model draws its body (see `shown_mesh`), and at
@@ -2617,7 +2625,8 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
                 for i in m.circular_rim(*index) {
                     let selected = sel.iter().any(|x| matches!(x, Sel::Edge { body: b, index: j, .. } if b == body && *j == i));
                     if !selected && let Some(e) = if i == *index { edge_of(&m, i, *mid) } else { m.edges.get(i) } {
-                        edge_lines(&mut feedback, e, t.hover_edge, t.hover_edge_halo, 2.0);
+                        // A wider line while touch or a pen is in use, to match its reach.
+                        edge_lines(&mut feedback, e, t.hover_edge, t.hover_edge_halo, 2.0 + app.touch.sizes().line_halo * 0.5);
                     }
                 }
             }
@@ -3872,23 +3881,37 @@ fn origin_point_shown(app: &SolveApp) -> bool {
 /// Screen-space dots: the origin point, and hovered or selected body vertices.
 fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
+    // Touch and pen draw the dots bigger, to match how far a press reaches them.
+    let size = app.touch.sizes();
     if origin_point_shown(app)
         && let Some(o) = proj.to_screen(Vec3::ZERO)
     {
-        painter.circle(o, 4.5, t.origin_point, Stroke::new(1.0, Color32::from_gray(110)));
+        painter.circle(o, 4.5 * size.dot, t.origin_point, Stroke::new(1.0, Color32::from_gray(110)));
     }
     for x in app.highlighted() {
         if let Sel::Vertex { point, .. } = x
             && let Some(p) = proj.to_screen(point)
         {
-            painter.circle(p, 4.0, t.sel_vertex, Stroke::new(1.5, t.sel_edge));
+            painter.circle(p, 4.0 * size.dot, t.sel_vertex, Stroke::new(1.5, t.sel_edge));
         }
     }
     if let Some(Hit::Vertex { point, .. }) = &app.viewport.hover
         && let Some(p) = proj.to_screen(*point)
     {
-        painter.circle(p, 4.5, t.hover_edge_halo, Stroke::new(1.5, t.hover_edge));
+        paint_halo(painter, p, size.halo, t.hover_edge);
+        painter.circle(p, 4.5 * size.dot, t.hover_edge_halo, Stroke::new(1.5, t.hover_edge));
     }
+}
+
+/// The halo round the point under the pointer while touch or a pen is in use (`radius` is 0 for
+/// a mouse: none): a soft disc, stronger while the pointer is pressed, so it is clear what a
+/// press or a drag is about to take.
+fn paint_halo(painter: &egui::Painter, at: Pos2, radius: f32, col: Color32) {
+    if radius <= 0.0 {
+        return;
+    }
+    let pressed = painter.ctx().input(|i| i.pointer.primary_down());
+    painter.circle_filled(at, radius, col.gamma_multiply(if pressed { 0.45 } else { 0.2 }));
 }
 
 /// Where the ground grid is centred: where the view's axis (`back`, through the camera's target
@@ -3909,6 +3932,7 @@ fn grid_centre(tf: Vec3, back: Vec3, n: Vec3, ext: f64) -> Vec3 {
 /// Hover feedback for the active sketch's points and curves (drawn on top of everything).
 fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let col = Tokens::get().hover_profile_edge;
+    let size = app.touch.sizes();
     let st = crate::open_meshing::shown_world(app);
     match &app.viewport.hover {
         // Trim shows the piece it would take away instead (`sketch_tools::preview`, #3052).
@@ -3917,8 +3941,14 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             if let Some(ss) = st.sketch(*sketch)
                 && let Some(ci) = ss.sketch.curve_index(id)
             {
+                let pressed = painter.ctx().input(|i| i.pointer.primary_down());
                 for part in &crate::sketch_display::curve_sample(app, *sketch, ci, &ss.plane, proj).parts {
                     let mode = ss.sketch.curves.get(ci).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+                    // Touch and pen: a wide soft band under the line shows how far a press reaches.
+                    if size.line_halo > 0.0 {
+                        let band = Stroke::new(3.0 + size.line_halo, col.gamma_multiply(if pressed { 0.45 } else { 0.2 }));
+                        crate::tools::paint_sketch_path(part, 0, painter, proj, band);
+                    }
                     crate::tools::paint_sketch_path(part, mode, painter, proj, Stroke::new(3.0, col));
                 }
             }
@@ -3927,7 +3957,8 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             if let Some(ss) = st.sketch(*sketch)
                 && let Some(p) = proj.to_screen(ss.plane.to_world(*at))
             {
-                painter.circle_stroke(p, 6.0, Stroke::new(2.0, col));
+                paint_halo(painter, p, size.halo, col);
+                painter.circle_stroke(p, 6.0 * size.dot, Stroke::new(2.0, col));
             }
         }
         _ => {}
@@ -3964,6 +3995,8 @@ pub(crate) fn standalone_points(app: &SolveApp) -> Vec<Vec3> {
 /// Sketch points and the status of the active sketch (constraint glyphs: `sketch_tools`).
 fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
+    // Touch and pen draw the points bigger, to match how far a press reaches them.
+    let dot = app.touch.sizes().dot;
     let st = crate::open_meshing::shown_world(app);
     for item in &app.session.selection {
         if let Sel::ExternalSketchPoint { sketch, id } = item
@@ -3971,12 +4004,12 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             && let Some(point) = ss.sketch.resolve_point(id).and_then(|i| ss.sketch.point(i))
             && let Some(pos) = proj.to_screen(ss.plane.to_world(point))
         {
-            painter.circle_stroke(pos, 6.0, Stroke::new(2.0, t.sel_edge));
+            painter.circle_stroke(pos, 6.0 * dot, Stroke::new(2.0, t.sel_edge));
         }
     }
     for p in standalone_points(app) {
         if let Some(sp) = proj.to_screen(p) {
-            painter.rect_filled(Rect::from_center_size(sp, vec2(4.0, 4.0)), 0.0, t.sketch);
+            painter.rect_filled(Rect::from_center_size(sp, vec2(4.0, 4.0) * dot), 0.0, t.sketch);
         }
     }
     let Some(sid) = app.session.active_sketch else { return };
@@ -4000,12 +4033,12 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             t.sketch_point_free
         };
         if i == 0 {
-            painter.circle(sp, 3.5, Color32::from_rgb(240, 200, 60), Stroke::new(1.0, t.body_edge));
+            painter.circle(sp, 3.5 * dot, Color32::from_rgb(240, 200, 60), Stroke::new(1.0, t.body_edge));
         } else if virtual_corners.binary_search(&i).is_ok() {
             // A virtual sharp corner: an open square, it is not on any drawn curve.
-            painter.rect_stroke(Rect::from_center_size(sp, vec2(6.0, 6.0)), 0.0, Stroke::new(1.2, c), egui::StrokeKind::Middle);
+            painter.rect_stroke(Rect::from_center_size(sp, vec2(6.0, 6.0) * dot), 0.0, Stroke::new(1.2, c), egui::StrokeKind::Middle);
         } else {
-            painter.rect_filled(Rect::from_center_size(sp, vec2(5.0, 5.0)), 0.0, c);
+            painter.rect_filled(Rect::from_center_size(sp, vec2(5.0, 5.0) * dot), 0.0, c);
         }
     }
     loose_end_markers(sk, &ss.ends, &ss.plane, painter, proj, &t);
@@ -8065,5 +8098,110 @@ mod standalone_point_tests {
         assert!(points[0].dist(Vec3::new(5.0, 4.0, 0.0)) < 1e-9, "{points:?}");
         app.ui.show_sketches = false;
         assert!(standalone_points(&app).is_empty(), "sketches hidden");
+    }
+}
+
+/// While touch or a pen is in use, points and lines are picked from further away than for a
+/// mouse ([`crate::touch::Sizes`]), and a point wins over a line within reach of both.
+#[cfg(test)]
+mod touch_reach_tests {
+    use super::*;
+
+    fn view(app: &mut SolveApp) -> Proj {
+        app.fit_view();
+        projection(app, Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)))
+    }
+
+    /// A model edge is picked from 9 points away by touch and pen, not by a mouse (6), and not
+    /// from 14 either way. The pick is cached while the pointer rests, so the mode is part of
+    /// what the cache remembers.
+    #[test]
+    fn a_model_edge_is_picked_from_further_away_by_touch() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.box", &json!({"length": 60, "width": 40, "height": 20, "body_name": "B"})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        let proj = view(&mut app);
+        // The middle of a top edge, and the screen direction across it, away from the box.
+        let (sa, sb) = (proj.to_screen(Vec3::new(0.0, 0.0, 20.0)).unwrap(), proj.to_screen(Vec3::new(60.0, 0.0, 20.0)).unwrap());
+        let centre = proj.to_screen(Vec3::new(30.0, 20.0, 10.0)).unwrap();
+        let mid = sa.lerp(sb, 0.5);
+        let mut across = (sb - sa).normalized().rot90();
+        if (mid - centre).dot(across) < 0.0 {
+            across = -across;
+        }
+        let at = |px: f32| mid + across * px;
+        let edge = |app: &mut SolveApp, px: f32| pick_cached(app, &proj, at(px)).iter().any(|h| matches!(h, Hit::Edge { .. }));
+        assert!(edge(&mut app, 3.0), "the edge itself");
+        assert!(!edge(&mut app, 9.0), "a mouse does not reach 9 points");
+        app.touch.in_use = true;
+        assert!(edge(&mut app, 9.0), "touch reaches 9 points (the cached mouse answer is not reused)");
+        assert!(!edge(&mut app, 14.0), "touch has a limit too");
+        app.touch.in_use = false;
+        assert!(!edge(&mut app, 9.0), "the mouse brings the old reach back");
+    }
+
+    /// Near a corner of a sketch, 13 points from its point and about 9 from both lines, a mouse
+    /// reaches neither; touch reaches both and the click takes the point.
+    #[test]
+    fn a_sketch_point_beats_a_line_for_touch() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        app.run("sketch.rectangle.two_point", json!({"p0": [10, 10], "p1": [50, 40]})).unwrap();
+        app.cam.set_view(solidcraft_engine::render::StandardView::Top);
+        let proj = view(&mut app);
+        let corner = proj.to_screen(Vec3::new(10.0, 10.0, 0.0)).unwrap();
+        let toward = |to: Vec3| (proj.to_screen(to).unwrap() - corner).normalized();
+        let inward = (toward(Vec3::new(50.0, 10.0, 0.0)) + toward(Vec3::new(10.0, 40.0, 0.0))).normalized();
+        let cursor = corner + inward * 13.0;
+        let sketch =
+            |hits: &[Hit]| hits.iter().filter(|h| matches!(h, Hit::SketchPoint { .. } | Hit::SketchCurve { .. })).cloned().collect::<Vec<_>>();
+        assert!(sketch(&pick_cached(&mut app, &proj, cursor)).is_empty(), "a mouse reaches neither the point nor a line from here");
+        app.touch.in_use = true;
+        let hits = pick_cached(&mut app, &proj, cursor);
+        let found = sketch(&hits);
+        assert!(matches!(found.first(), Some(Hit::SketchPoint { .. })), "the point comes first: {found:?}");
+        assert!(found.iter().any(|h| matches!(h, Hit::SketchCurve { .. })), "a line is in reach too: {found:?}");
+        assert!(matches!(candidate(&app, &hits), Some((Hit::SketchPoint { .. }, _))), "a click takes the point");
+    }
+
+    /// The halo under a hovered point and its bigger ring are for touch and pen only: a mouse
+    /// sees the plain 6-point ring it always did.
+    #[test]
+    fn the_halo_is_drawn_for_touch_and_pen_only() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0": [10, 10], "p1": [50, 40]})).unwrap();
+        h.call("ui.view", json!({"view": "top"}));
+        h.settle();
+        let sketch = h.app.session.active_sketch.unwrap();
+        let (id, at) = {
+            let st = h.app.session.world_state();
+            let p = st.sketch(sketch).unwrap().sketch.points.get(1).unwrap().clone();
+            (p.id, p.pos)
+        };
+        h.app.viewport.hover = Some(Hit::SketchPoint { sketch, id, at });
+        let proj = display_proj(&h.app);
+        // The circles the hover draws: (radius, filled).
+        let circles = |h: &crate::scenario::Harness| {
+            let ctx = crate::fonts::test_context();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                hover_highlight(&h.app, &ui.ctx().layer_painter(egui::LayerId::background()), &proj);
+            });
+            output.textures_delta.clear();
+            output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    Shape::Circle(c) => Some((c.radius, c.fill != Color32::TRANSPARENT)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(circles(&h), vec![(6.0, false)], "a mouse: the ring alone");
+        h.app.touch.in_use = true;
+        let touch = circles(&h);
+        let sizes = crate::touch::Sizes::TOUCH;
+        assert!(touch.contains(&(sizes.halo, true)), "touch and pen: a halo disc, {touch:?}");
+        assert!(touch.contains(&(6.0 * sizes.dot, false)), "and a bigger ring, {touch:?}");
     }
 }

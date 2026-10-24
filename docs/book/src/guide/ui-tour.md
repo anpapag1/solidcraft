@@ -199,6 +199,14 @@ On a tablet or touchscreen (in the browser, a pen and fingers are told apart):
   anything.
 - **Fingers elsewhere** (toolbar, panels, menus, dialogs, the view cube and the navigation bar):
   a finger is the mouse. Hold it on a control for that control's menu.
+- **Bigger handles:** while you use touch or a pen, points, lines and handles are easier to hit.
+  Sketch points and model vertices are drawn larger and are picked from about 20 points away;
+  sketch lines, model edges and axes are picked from about 12 points away; the move triad's
+  ball and arrows and a text's corner and rotation handles grab from further out too. Where a
+  point and a line are both in reach, the point wins. The thing under the pen gets a soft halo
+  (a wider band along a line or edge) that turns stronger while the pen is pressed, so you can
+  see what a press will take. Using the mouse brings the usual sizes back. The rest of the
+  interface is not scaled.
 - **Number pad:** while you use touch or a pen, a value field that has the keyboard (a
   dimension's value, a tool's length or angle, a dialog's distance) gets a number pad under it:
   digits, `.`, `+ − × ÷ ( )`, backspace and Enter. Its top row shows what you typed; drag it

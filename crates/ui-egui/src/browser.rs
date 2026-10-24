@@ -2141,7 +2141,7 @@ pub(crate) fn occurrence_triad(app: &mut SolveApp, ui: &mut egui::Ui, painter: &
     let before = (m.translate, m.angles);
     let Some(t) = occurrence_triad_model(app) else { return };
     let step = crate::canvas::snap_step(app.cam.half_height());
-    let Some(g) = gizmo::show(ui, painter, proj, egui::Id::new("sc_occ_triad"), &t, step) else { return };
+    let Some(g) = gizmo::show(ui, painter, proj, egui::Id::new("sc_occ_triad"), &t, step, &app.touch.sizes()) else { return };
     if g.started || m.drag0.is_none() {
         m.drag0 = Some((m.translate, m.angles));
     }

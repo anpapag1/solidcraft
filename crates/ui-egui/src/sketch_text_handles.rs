@@ -15,9 +15,8 @@ use crate::SolveApp;
 use crate::theme::Tokens;
 use crate::viewport::Proj;
 
-/// Pixels from a handle's centre that still grab it.
-const GRAB_PX: f32 = 8.0;
-/// How far above the frame the rotation knob sits (pixels).
+/// How far above the frame the rotation knob sits (pixels) for a mouse; touch and pen move it
+/// out by what their bigger grab area adds, so the knob's reach stays clear of the corners.
 const KNOB_PX: f32 = 26.0;
 /// Smallest and largest factor one resize may apply, so the text stays a usable size.
 const SCALE_RANGE: (f64, f64) = (0.02, 50.0);
@@ -157,17 +156,20 @@ fn screen(app: &SolveApp, proj: &Proj, f: &Frame) -> Option<Screen> {
     // "Up" for the text, as it looks on screen.
     let up = to_screen(top + Vec2::new(0.0, f.height.max(1e-3)))? - knob_base;
     let up = if up.length() > 1e-3 { up.normalized() } else { vec2(0.0, -1.0) };
-    Some(Screen { corners, knob: knob_base + up * KNOB_PX, knob_base })
+    let knob_px = KNOB_PX + (app.touch.sizes().frame - crate::touch::Sizes::MOUSE.frame);
+    Some(Screen { corners, knob: knob_base + up * knob_px, knob_base })
 }
 
 /// The handle under a screen position.
 fn hit(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Frame, Grab)> {
     let f = frame(app, &target(app)?)?;
     let s = screen(app, proj, &f)?;
-    if s.knob.distance(pos) <= GRAB_PX {
+    // Pixels from a handle's centre that still grab it (more for touch and pen).
+    let grab = app.touch.sizes().frame;
+    if s.knob.distance(pos) <= grab {
         return Some((f, Grab::Rotate));
     }
-    let corner = (0..4).find(|&i| s.corners.get(i).is_some_and(|c| c.distance(pos) <= GRAB_PX))?;
+    let corner = (0..4).find(|&i| s.corners.get(i).is_some_and(|c| c.distance(pos) <= grab))?;
     Some((f, Grab::Corner(corner)))
 }
 
@@ -280,13 +282,14 @@ pub(crate) fn show(app: &SolveApp, ui: &egui::Ui, painter: &Painter, proj: &Proj
     let drag = DRAG.with(|d| d.borrow().as_ref().map(|d| d.grab));
     let under = hover.and_then(|p| hit(app, proj, p)).map(|(_, g)| g);
     let lit = |g: Grab| drag == Some(g) || (drag.is_none() && under == Some(g));
+    let dot = app.touch.sizes().dot;
     for (i, c) in s.corners.iter().enumerate() {
-        let r = Rect::from_center_size(*c, vec2(8.0, 8.0));
+        let r = Rect::from_center_size(*c, vec2(8.0, 8.0) * dot);
         painter.rect_filled(r, 1.0, if lit(Grab::Corner(i)) { tk.accent } else { tk.panel });
         painter.rect_stroke(r, 1.0, Stroke::new(1.5, tk.accent), StrokeKind::Middle);
         crate::scenario::publish_handle(&format!("text_corner_{i}"), *c);
     }
-    painter.circle(s.knob, 5.0, if lit(Grab::Rotate) { tk.accent } else { tk.panel }, Stroke::new(1.5, tk.accent));
+    painter.circle(s.knob, 5.0 * dot, if lit(Grab::Rotate) { tk.accent } else { tk.panel }, Stroke::new(1.5, tk.accent));
     crate::scenario::publish_handle("text_rotate", s.knob);
     match drag.or(under) {
         Some(Grab::Rotate) => ui.ctx().set_cursor_icon(if drag.is_some() { CursorIcon::Grabbing } else { CursorIcon::Grab }),
