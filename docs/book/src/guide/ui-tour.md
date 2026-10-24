@@ -207,6 +207,11 @@ On a tablet or touchscreen (in the browser, a pen and fingers are told apart):
   (a wider band along a line or edge) that turns stronger while the pen is pressed, so you can
   see what a press will take. Using the mouse brings the usual sizes back. The rest of the
   interface is not scaled.
+- **Narrow screens** (under 900 pt wide, such as a tablet held upright): the ribbon shows icons
+  only, so more tools stay on it instead of dropping into menus (your **Ribbon labels**
+  preference is kept). Under 1000 pt the Browser takes at most a third of the width and folds to
+  its header while a sketch's or tool's details are open; tap its header to open it, and it folds
+  again when the tool ends.
 - **Number pad:** while you use touch or a pen, a value field that has the keyboard (a
   dimension's value, a tool's length or angle, a dialog's distance) gets a number pad under it:
   digits, `.`, `+ − × ÷ ( )`, backspace and Enter. Its top row shows what you typed; drag it

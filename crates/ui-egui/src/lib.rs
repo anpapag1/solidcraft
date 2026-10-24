@@ -1707,7 +1707,8 @@ impl SolveApp {
         }
         let full = ui.available_rect_before_wrap();
         if floating {
-            let cards = shell::Cards::new(full, self.ui.layout, toolbar::ribbon_height(self.preferences.ribbon_labels));
+            let cards =
+                shell::Cards::new(full, self.ui.layout, toolbar::ribbon_height(toolbar::ribbon_labels(self, ui.ctx().content_rect().width())));
             self.shell.cards = vec![cards.workspace, cards.ribbon];
             self.shell.history = if left_timeline {
                 let below_ribbon = egui::Rect::from_min_max(egui::pos2(full.left(), cards.bottom), full.max);

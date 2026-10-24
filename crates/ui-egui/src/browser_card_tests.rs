@@ -120,6 +120,37 @@ fn browser_header_folds_the_floating_card_to_its_header_and_back() {
     assert!((rect_of("browser:card").unwrap().height() - open.height()).abs() < 1.0);
 }
 
+/// On a tablet-sized screen the browser takes a third at most, folds while a sketch's details are
+/// open, and opens again from its header until the sketch ends.
+#[test]
+fn narrow_browser_folds_while_the_tool_details_are_open() {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":820,"height":1100}));
+    h.settle();
+    let open = rect_of("browser:card").unwrap();
+    assert!(open.width() <= 820.0 * 0.3 + 1.0, "{open:?}");
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.settle();
+    assert!(h.app.viewport.palette_rect.is_some());
+    let folded = rect_of("browser:card").unwrap();
+    assert!(folded.height() < 60.0, "folded by the open details: {folded:?}");
+    assert!(!h.app.tree.panel_collapsed, "the user's own fold is untouched");
+    let at = handle_at("browser:header").unwrap();
+    h.call("ui.click", json!({"x":at.x,"y":at.y}));
+    h.settle();
+    assert!(h.app.tree.narrow_open);
+    assert!(rect_of("browser:card").unwrap().height() > 100.0, "opened from its header");
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.settle();
+    assert!(!h.app.tree.narrow_open, "closing the tool resets the override");
+    assert!(rect_of("browser:card").unwrap().height() > 100.0, "no details open: the browser stays open");
+    // A wide screen never folds it.
+    h.call("ui.resize", json!({"width":1400,"height":900}));
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.settle();
+    assert!(rect_of("browser:card").unwrap().height() > 100.0);
+}
+
 /// Tiny or odd window sizes never panic: the cards leave out what cannot fit.
 #[test]
 fn tiny_floating_windows_never_panic() {

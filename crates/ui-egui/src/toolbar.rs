@@ -103,6 +103,16 @@ const BUTTON_HEIGHT: f32 = 60.0;
 const ICON_BUTTON_HEIGHT: f32 = 36.0;
 const ICON_GROUP_HEIGHT: f32 = 62.0;
 
+/// Screens narrower than this (points) get the icon-only ribbon: with labels the tools no longer
+/// fit and drop into menus, which is slow with a finger.
+pub const COMPACT_RIBBON_WIDTH: f32 = 900.0;
+
+/// Whether the ribbon shows labels on a screen `width` points wide: the preference, unless the
+/// screen is too narrow for the tools with labels.
+pub(crate) fn ribbon_labels(app: &SolveApp, width: f32) -> bool {
+    app.preferences.ribbon_labels && !(width.is_finite() && width < COMPACT_RIBBON_WIDTH)
+}
+
 /// The same height drives shell reservations and ribbon painting in either layout.
 pub(crate) fn ribbon_height(labels: bool) -> f32 {
     if labels { RIBBON_HEIGHT } else { TAB_ROW_HEIGHT + ICON_GROUP_HEIGHT + 1.0 }
@@ -1013,7 +1023,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     crate::workspace::sync_context(app);
     let floating = Container::for_layout(app.ui.layout, Surface::Panel).floating();
-    let labels = app.preferences.ribbon_labels;
+    let labels = ribbon_labels(app, ui.ctx().content_rect().width());
     let button_height = if labels { BUTTON_HEIGHT } else { ICON_BUTTON_HEIGHT };
     let group_height = if labels { GROUP_HEIGHT } else { ICON_GROUP_HEIGHT };
     let ribbon_height = ribbon_height(labels);

@@ -635,6 +635,26 @@ fn two_collapsed_compact_headers_leave_live_viewport_below_their_column() {
     }
 }
 
+/// A narrow screen gets the icon-only ribbon (more tools in reach); the preference is untouched
+/// and a wide screen is labelled again.
+#[test]
+fn a_narrow_screen_shows_the_ribbon_icon_only_without_changing_the_preference() {
+    let mut h = Harness::new();
+    h.call("ui.resize", json!({"width":1400,"height":900}));
+    h.settle();
+    let wide = rect_of("toolbar").unwrap();
+    h.call("ui.resize", json!({"width":744,"height":900}));
+    h.settle();
+    let narrow = rect_of("toolbar").unwrap();
+    assert!(narrow.height() < wide.height(), "{narrow:?} {wide:?}");
+    assert!(h.app.preferences.ribbon_labels);
+    assert!(!crate::toolbar::ribbon_labels(&h.app, 744.0) && crate::toolbar::ribbon_labels(&h.app, 1400.0));
+    assert!(!crate::toolbar::ribbon_labels(&h.app, f32::NAN) || h.app.preferences.ribbon_labels);
+    h.call("ui.resize", json!({"width":1400,"height":900}));
+    h.settle();
+    assert!((rect_of("toolbar").unwrap().height() - wide.height()).abs() < 1.0);
+}
+
 #[test]
 fn ribbon_labels_are_saved_independently_and_icon_only_commands_remain_reachable() {
     for mode in [LayoutMode::Floating, LayoutMode::Docked] {

@@ -62,6 +62,9 @@ pub fn drawn_occurrences() -> Vec<(Vec<u64>, String, Rect, bool)> {
 pub struct TreeState {
     /// The floating browser card is folded to its header.
     pub panel_collapsed: bool,
+    /// On a narrow screen the card folds by itself while a tool's details are open; this is the
+    /// user opening it anyway, until the tool closes.
+    pub narrow_open: bool,
     /// Geometry and assembly queries, independent of the camera, selection and row visibility.
     model: Option<model::Model>,
     /// Folders closed by the user (keys like `c0/bodies`).
@@ -681,6 +684,33 @@ const BROWSER_RAIL: f32 = 6.0;
 /// How opaque the floating browser's card is; the workspace shows through the rest.
 const BROWSER_FLOAT_ALPHA: f32 = 0.4;
 
+/// The browser takes at most this share of a narrow screen's width.
+const NARROW_SHARE: f32 = 0.3;
+/// Screens narrower than this (points) are narrow for the browser.
+const NARROW_SCREEN: f32 = 1000.0;
+
+/// The screen is too narrow for the browser beside a tool's details.
+fn narrow(ctx: &egui::Context) -> bool {
+    let w = ctx.content_rect().width();
+    w.is_finite() && w < NARROW_SCREEN
+}
+
+/// The browser is folded to its header: by the user, or on a narrow screen while the tool's details
+/// are open and the user hasn't opened it.
+fn folded(app: &SolveApp, ctx: &egui::Context) -> bool {
+    app.tree.panel_collapsed || (narrow(ctx) && tool_details_open(app, ctx) && !app.tree.narrow_open)
+}
+
+fn tool_details_open(app: &SolveApp, ctx: &egui::Context) -> bool {
+    crate::sketch_palette::visible(app, ctx) || app.dialog.is_some()
+}
+
+/// The remembered width, held to a share of a narrow screen.
+fn shown_width(app: &SolveApp, ctx: &egui::Context) -> f32 {
+    let width = browser_width(app.preferences.browser_width);
+    if narrow(ctx) { width.min((ctx.content_rect().width() * NARROW_SHARE).max(MIN_BROWSER_WIDTH)) } else { width }
+}
+
 pub(crate) fn browser_width(remembered: f32) -> f32 {
     if remembered.is_finite() { remembered.clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH) } else { crate::prefs::DEFAULT_BROWSER_WIDTH }
 }
@@ -711,7 +741,10 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
     let container =
         Container::new(ui.ctx(), Surface::Panel).joined(crate::ui_kit::DockEdges { left: true, top: true, bottom: stacked, ..Default::default() });
     let gap = container.gap();
-    let width = browser_width(app.preferences.browser_width);
+    if !tool_details_open(app, ui.ctx()) {
+        app.tree.narrow_open = false;
+    }
+    let width = shown_width(app, ui.ctx());
     let vertical = app.ui.show_timeline && app.preferences.timeline_left;
     let mut available = available;
     if !stacked {
@@ -814,7 +847,7 @@ fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, c
             (app.preferences.timeline_left_browser_collapsed && app.shell.history_folding.is_none_or(|p| p[0] >= 1.0))
                 || ui.available_height() <= t.space_3
         } else {
-            app.tree.panel_collapsed && !(app.ui.show_timeline && app.preferences.timeline_left)
+            folded(app, ui.ctx()) && !(app.ui.show_timeline && app.preferences.timeline_left)
         })
     {
         return;
@@ -837,7 +870,7 @@ fn browser_header(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
     crate::scenario::publish_target("browser:header", rect);
     let vertical = app.ui.show_timeline && app.preferences.timeline_left;
     let stacked = crate::timeline_left::stacked(app);
-    let collapsed = collapsible && if stacked { app.preferences.timeline_left_browser_collapsed } else { !vertical && app.tree.panel_collapsed };
+    let collapsed = collapsible && if stacked { app.preferences.timeline_left_browser_collapsed } else { !vertical && folded(app, ui.ctx()) };
     if vertical {
         crate::scenario::publish_handle("left-browser-toggle", rect.center());
     }
@@ -866,8 +899,11 @@ fn browser_header(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
                 app.preferences.timeline_left_browser_collapsed = !app.preferences.timeline_left_browser_collapsed;
             } else if vertical {
                 app.preferences.timeline_left_browser_collapsed = true;
+            } else if narrow(ui.ctx()) && tool_details_open(app, ui.ctx()) && !app.tree.panel_collapsed {
+                app.tree.narrow_open = !app.tree.narrow_open;
             } else {
                 app.tree.panel_collapsed = !app.tree.panel_collapsed;
+                app.tree.narrow_open = false;
             }
         }
     }

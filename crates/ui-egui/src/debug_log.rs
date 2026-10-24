@@ -39,6 +39,8 @@ struct Log {
 thread_local! {
     static LOG: RefCell<Log> = RefCell::new(Log::default());
     static NOW: Cell<f64> = const { Cell::new(0.0) };
+    /// The screen size last logged.
+    static SCREEN: Cell<(i32, i32)> = const { Cell::new((0, 0)) };
 }
 
 /// Add a line.
@@ -91,6 +93,13 @@ pub(crate) fn show(app: &SolveApp, ctx: &egui::Context) {
     if !app.preferences.debug_log {
         LOG.with(|log| log.borrow_mut().drawn.clear());
         return;
+    }
+    // The screen's size in points and its pixel ratio, whenever either changes: what layout
+    // decisions (the compact ribbon, the folded browser) are made from.
+    let screen = ctx.content_rect();
+    let key = (screen.width().round() as i32, (ctx.pixels_per_point() * 100.0).round() as i32);
+    if SCREEN.with(|s| s.replace(key)) != key {
+        push(format!("screen {} x {} pt, {:.2} pixels per point", key.0, screen.height().round(), key.1 as f32 / 100.0));
     }
     let t = Tokens::get();
     let view = app.viewport.layout.as_ref().map(|l| l.drawable).filter(|r| r.is_finite() && r.is_positive()).unwrap_or(ctx.content_rect());
@@ -201,7 +210,8 @@ mod tests {
         let badge = super::LOG.with(|l| l.borrow().drawn.first().copied());
         let Some(badge) = badge else { panic!("no badge") };
         assert!(super::covers(badge.center()));
-        assert!(h.widget("Debug  1  ·  1 error(s)").is_some(), "the badge counts the error");
+        assert!(super::lines().iter().any(|l| l.starts_with("screen ")), "the screen size is logged once the log is on");
+        assert!(h.widget("Debug  2  ·  1 error(s)").is_some(), "the badge counts the screen line and the error");
         h.step(&serde_json::json!({"click": [badge.center().x, badge.center().y]})).unwrap();
         h.frames(2);
         assert!(h.widget("Copy").is_some(), "the panel opened");
