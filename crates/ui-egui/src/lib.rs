@@ -26,6 +26,7 @@ pub mod context_menu;
 pub mod control;
 pub mod control_job;
 pub mod crash_ui;
+pub mod debug_log;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
@@ -1236,6 +1237,9 @@ impl SolveApp {
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
         let (text, at) = (s.into(), now_ms());
+        if error {
+            debug_log::error(text.clone());
+        }
         self.messages.push(&text, error, at);
         self.status = Some((text, at, error));
         self.status_undo = false;
@@ -1551,6 +1555,7 @@ impl SolveApp {
             rect.is_some_and(|r| r.contains(p))
                 && !covered.iter().chain(&controls).any(|c| c.contains(p))
                 && !keypad::covers(p)
+                && !debug_log::covers(p)
                 && layer.is_none_or(|l| ctx.layer_id_at(p).is_none_or(|at| at == l))
         };
         self.touch.device_input(raw, events, &camera_at);
@@ -1644,6 +1649,7 @@ impl SolveApp {
             agent_cursor::paint(self, ui.ctx());
         }
         keypad::show(self, ui.ctx());
+        debug_log::show(self, ui.ctx());
         if self.file_picker_busy() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }

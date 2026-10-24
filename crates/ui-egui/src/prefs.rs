@@ -497,6 +497,9 @@ preference_settings! {
     ribbon_labels: bool = true, PAGE_INTERFACE;
     /// Interface scale (1 = 100 %).
     ui_scale: f32 = 1.0, PAGE_INTERFACE, accept(0.5..=2.5);
+    /// A log of what touch, pen and the number pad did, in the 3D view's bottom-left corner (also
+    /// `?debug` in the browser's address).
+    debug_log: bool = false, PAGE_INTERFACE => check("Show the debug log", "A badge in the 3D view's corner opens the latest touch, pen and error messages");
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
     /// (#1290). Menus, dialogs and labels use it; glyphs it lacks fall back as before.
     ui_font: String = String::new(), PAGE_INTERFACE;

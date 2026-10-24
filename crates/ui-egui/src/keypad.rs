@@ -133,6 +133,7 @@ pub(crate) fn filter(raw: &mut egui::RawInput) {
                     if let Some(Press::Key(Some(key))) = s.press
                         && layout.key_at(pos) == Some(key)
                     {
+                        crate::debug_log::push(format!("number pad: {key:?}"));
                         out.extend(typed(key));
                     }
                     s.press = None;
@@ -166,10 +167,16 @@ pub(crate) fn show(app: &SolveApp, ctx: &egui::Context) {
         let mut s = s.borrow_mut();
         let offer = s.offer.take().filter(|o| app.touch.in_use && ctx.memory(|m| m.has_focus(o.id)));
         let Some(offer) = offer else {
+            if s.layout.is_some() {
+                crate::debug_log::push("number pad hidden (no value field has the keyboard, or the mouse is in use)");
+            }
             s.layout = None;
             s.anchor = None;
             return;
         };
+        if s.layout.is_none() {
+            crate::debug_log::push(format!("number pad shown (field text \"{}\")", offer.text));
+        }
         let t = Tokens::get();
         let size =
             vec2(PAD * 2.0 + KEY.x * COLUMNS as f32 + GAP * (COLUMNS - 1) as f32, PAD * 2.0 + HANDLE + GAP + (KEY.y + GAP) * ROWS.len() as f32 - GAP);

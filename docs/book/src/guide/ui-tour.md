@@ -204,5 +204,9 @@ On a tablet or touchscreen (in the browser, a pen and fingers are told apart):
   digits, `.`, `+ − × ÷ ( )`, backspace and Enter. Its top row shows what you typed; drag it
   there to move the pad out of the way, and it stays where you put it.
 - **Leaving a tool:** press its toolbar button again (the same as Esc).
+- **Debug log:** Preferences › Interface › Show the debug log (or add `?debug` to the browser's
+  address) puts a small badge in the 3D view's bottom-left corner. Tap it for the latest
+  messages: how each finger and the pen were taken, when the number pad showed, and errors.
+  **Copy** puts them on the clipboard for a bug report.
 
 In the desktop app a pen counts as a finger, as the system reports it.

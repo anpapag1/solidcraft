@@ -655,6 +655,10 @@ mod web {
                             // eframe's web painter has no stencil buffer.
                             app.set_wgpu(rs, DEPTH_BITS, 0, 1);
                         }
+                        // `?debug`: the on-screen log of touch, pen and errors (solidcraft_ui_egui::debug_log).
+                        if query().contains("debug") {
+                            app.preferences.debug_log = true;
+                        }
                         if query().contains("sample") {
                             if let Err(e) = app.session.run_script(&solidcraft_engine::sample::script()) {
                                 app.set_status(format!("sample: {e}"), true);

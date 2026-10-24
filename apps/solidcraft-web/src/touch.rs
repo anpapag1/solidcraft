@@ -25,7 +25,7 @@ pub type Queue = Rc<RefCell<Vec<DeviceEvent>>>;
 
 #[derive(Default)]
 struct State {
-    /// Pens and fingers down (or a pen hovering) on the canvas: pointer id and whether it is a pen.
+    /// Pens and fingers down on the canvas: pointer id and whether it is a pen.
     active: Vec<(i32, bool)>,
     /// When (event time stamp, ms) a pen or finger was last seen.
     last_ms: f64,
@@ -98,16 +98,25 @@ fn pointer(event: &web_sys::PointerEvent, canvas: &web_sys::HtmlCanvasElement, c
     let mut st = state.borrow_mut();
     let tracked = st.active.iter().any(|(i, _)| *i == id);
     let here = on(event, canvas);
-    // A pen or finger is ours from when it lands on (or, a pen, hovers over) the canvas.
-    let ours = tracked || (here && (kind == "pointerdown" || (pen && kind == "pointermove")));
-    if !ours {
+    // A pen or finger is ours from when it lands on the canvas until it lifts. A pen hovering
+    // over the canvas is ours too, but not tracked: nothing tells us reliably when it goes.
+    let hover = pen && !tracked && here && matches!(kind.as_str(), "pointermove" | "pointerleave");
+    let lands = here && kind == "pointerdown";
+    if !(tracked || hover || lands) {
         return;
     }
-    if !tracked {
+    if lands && !tracked {
+        // Never let one through to eframe (it would be the mouse again): the oldest goes, its
+        // end having been lost.
         if st.active.len() >= MAX_POINTERS {
-            return;
+            let lost = st.active.remove(0);
+            solidcraft_ui_egui::debug_log::push(format!("browser: dropped pointer {} (its end never came)", lost.0));
         }
         st.active.push((id, pen));
+    }
+    // A tracked pen leaving the canvas while down still comes back up here.
+    if tracked && kind == "pointerleave" {
+        return;
     }
     st.last_ms = event.time_stamp();
     event.stop_propagation();
@@ -147,9 +156,8 @@ fn pointer(event: &web_sys::PointerEvent, canvas: &web_sys::HtmlCanvasElement, c
         };
         phase.map(|phase| DeviceEvent::Finger { id: u64::from(id.unsigned_abs()), phase, pos })
     };
-    // A pen leaving hover range, or a finger lifting, is no longer tracked; a pen lifted off
-    // the screen may still hover.
-    if (ended && !pen) || kind == "pointerleave" || kind == "pointercancel" {
+    // Lifted (or taken by the system), it is no longer tracked; a lifted pen may still hover.
+    if ended {
         st.active.retain(|(i, _)| *i != id);
     }
     drop(st);

@@ -145,10 +145,12 @@ impl Touch {
         self.raw = true;
         let now = raw.time.filter(|t| t.is_finite()).unwrap_or(0.0);
         // Anything the platform still sends as the mouse is a mouse or trackpad.
-        if raw.events.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. } | Event::MouseWheel { .. })) {
+        if self.in_use && raw.events.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. } | Event::MouseWheel { .. })) {
+            crate::debug_log::push("mouse or trackpad used: touch mode off");
             self.in_use = false;
         }
-        if !events.is_empty() {
+        if !self.in_use && !events.is_empty() {
+            crate::debug_log::push("pen or finger used: touch mode on");
             self.in_use = true;
         }
         if let Some(m) = raw.events.iter().rev().find_map(|e| if let Event::ModifiersChanged(m) = e { Some(*m) } else { None }) {
@@ -238,6 +240,10 @@ impl Router {
         let finite = |p: Pos2| p.is_finite();
         match event {
             DeviceEvent::PenDown { pos, button } if finite(pos) => {
+                if !*pen_seen {
+                    crate::debug_log::push("pen used: finger taps on the view no longer select");
+                }
+                crate::debug_log::push(format!("pen down ({button:?})"));
                 *pen_seen = true;
                 self.pen_at = Some(now);
                 self.drop_fingers(out);
@@ -249,7 +255,11 @@ impl Router {
                 self.pen_down = true;
             }
             DeviceEvent::PenMove { pos } if finite(pos) => {
-                self.pen_at = Some(now);
+                // Only a pen on the screen keeps the palm away: one hovering in the hand that
+                // holds it doesn't stop fingers moving the view.
+                if self.pen_down {
+                    self.pen_at = Some(now);
+                }
                 out.push(Event::PointerMoved(pos));
                 if self.pen_down {
                     out.push(pen_touch(TouchPhase::Move, pos));
@@ -258,13 +268,17 @@ impl Router {
             DeviceEvent::PenUp { pos, button } if finite(pos) => {
                 self.pen_at = Some(now);
                 out.push(Event::PointerButton { pos, button, pressed: false, modifiers: mods });
-                if self.pen_down && button == egui::PointerButton::Primary {
+                // Whatever button it reports, a pen that came up is up (a pen stuck down would
+                // keep every finger away).
+                if self.pen_down {
                     out.push(pen_touch(TouchPhase::End, pos));
                     self.pen_down = false;
                 }
+                crate::debug_log::push("pen up");
             }
             DeviceEvent::PenLeave => out.push(Event::PointerGone),
             DeviceEvent::PenCancel => {
+                crate::debug_log::push("pen cancelled by the system");
                 if self.pen_down {
                     out.push(pen_touch(TouchPhase::Cancel, Pos2::ZERO));
                     self.pen_down = false;
@@ -324,6 +338,19 @@ impl Router {
         out: &mut Vec<Event>,
     ) {
         let ends = matches!(phase, TouchPhase::End | TouchPhase::Cancel);
+        if phase == TouchPhase::Start {
+            // A new contact under an id still in use: that one's end was lost (ids are reused).
+            // Forget it, or it would keep fingers away for good.
+            if self.ignored.contains(&id) {
+                crate::debug_log::push(format!("finger {id}: lost end of an ignored touch"));
+                self.ignored.retain(|i| *i != id);
+            }
+            if self.fingers.iter().any(|f| f.id == id) {
+                crate::debug_log::push(format!("finger {id}: lost end, gesture reset"));
+                self.drop_fingers(out);
+                self.ignored.retain(|i| *i != id);
+            }
+        }
         if self.ignored.contains(&id) {
             if ends {
                 self.ignored.retain(|i| *i != id);
@@ -335,20 +362,33 @@ impl Router {
             let palm = self.pen_down || self.pen_at.is_some_and(|t| (now - t).abs() < PALM_WINDOW);
             let mouse_route = matches!(self.route, Route::Mouse { .. });
             if palm || mouse_route || self.fingers.len() >= MAX_TOUCHES {
-                if self.ignored.len() < MAX_TOUCHES {
-                    self.ignored.push(id);
+                let why = if self.pen_down {
+                    "the pen is down"
+                } else if palm {
+                    "the pen was just used (palm)"
+                } else if mouse_route {
+                    "another finger is the mouse"
+                } else {
+                    "too many fingers"
+                };
+                crate::debug_log::push(format!("finger {id} ignored: {why}"));
+                if self.ignored.len() >= MAX_TOUCHES {
+                    self.ignored.remove(0);
                 }
+                self.ignored.push(id);
                 return;
             }
             self.fingers.push(Finger { id, start: pos, pos, travel: 0.0 });
             match &mut self.route {
                 Route::Idle if camera_at(pos) => {
+                    crate::debug_log::push(format!("finger {id} on the view: moves the camera"));
                     self.tap_at = pos;
                     self.tap_travel = 0.0;
                     self.route = Route::Camera { since: now, most: 1, orbiting: false };
                     out.push(finger_touch(id, phase, pos));
                 }
                 Route::Idle => {
+                    crate::debug_log::push(format!("finger {id} on a control: acts as the mouse"));
                     self.route = Route::Mouse { id };
                     out.push(Event::PointerMoved(pos));
                     out.push(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: mods });
@@ -425,7 +465,8 @@ impl Router {
             return;
         }
         match most {
-            1 if !pen_seen => {
+            1 if pen_seen => crate::debug_log::push("finger tap on the view: no selection (a pen has been used)"),
+            1 => {
                 // A one-finger tap selects: a click over three frames, so egui sees the press
                 // and release apart and the hover is right for both.
                 let at = self.tap_at;
@@ -435,8 +476,14 @@ impl Router {
                 self.later.push_back(vec![release]);
                 self.later.push_back(vec![Event::PointerGone]);
             }
-            2 => self.command = Some("edit.undo"),
-            3 => self.command = Some("edit.redo"),
+            2 => {
+                crate::debug_log::push("two-finger tap: undo");
+                self.command = Some("edit.undo");
+            }
+            3 => {
+                crate::debug_log::push("three-finger tap: redo");
+                self.command = Some("edit.redo");
+            }
             _ => {}
         }
     }
@@ -983,6 +1030,44 @@ mod tests {
         device_frame(&mut t, 1.0, ends);
         // Every tracked finger has ended, so nothing is left in the camera.
         assert!(!t.camera_active());
+    }
+
+    #[test]
+    fn a_pen_never_leaves_fingers_shut_out() {
+        let mut t = Touch::default();
+        let at = pos2(300.0, 300.0);
+        // An up reporting another button still lifts the pen.
+        device_frame(&mut t, 0.0, vec![DeviceEvent::PenDown { pos: at, button: PointerButton::Primary }]);
+        device_frame(&mut t, 0.1, vec![DeviceEvent::PenUp { pos: at, button: PointerButton::Secondary }]);
+        assert!(!t.router.pen_down);
+        device_frame(&mut t, 2.0, vec![finger(1, TouchPhase::Start, 400.0, 300.0)]);
+        assert!(t.camera_active(), "fingers move the view once the pen is up");
+        device_frame(&mut t, 2.1, vec![finger(1, TouchPhase::End, 400.0, 300.0)]);
+        // A pen hovering in the hand doesn't keep fingers away.
+        device_frame(&mut t, 3.0, vec![DeviceEvent::PenMove { pos: at }]);
+        device_frame(&mut t, 3.05, vec![DeviceEvent::PenMove { pos: at }, finger(2, TouchPhase::Start, 400.0, 300.0)]);
+        assert!(t.camera_active(), "a hovering pen is not a palm");
+    }
+
+    #[test]
+    fn a_lost_finger_end_does_not_stick() {
+        let mut t = Touch::default();
+        // Finger 1 starts and its end is lost; the browser reuses the id for the next touch.
+        device_frame(&mut t, 0.0, vec![finger(1, TouchPhase::Start, 400.0, 300.0)]);
+        device_frame(&mut t, 5.0, vec![finger(1, TouchPhase::Start, 420.0, 300.0)]);
+        assert!(t.camera_active());
+        assert_eq!(t.router.fingers.len(), 1);
+        device_frame(&mut t, 5.1, vec![finger(1, TouchPhase::End, 420.0, 300.0)]);
+        assert!(!t.camera_active() && t.router.fingers.is_empty());
+        // An id ignored as a palm whose end was lost is a finger again when it lands anew.
+        device_frame(
+            &mut t,
+            6.0,
+            vec![DeviceEvent::PenDown { pos: pos2(1.0, 1.0), button: PointerButton::Primary }, finger(7, TouchPhase::Start, 400.0, 300.0)],
+        );
+        device_frame(&mut t, 6.1, vec![DeviceEvent::PenUp { pos: pos2(1.0, 1.0), button: PointerButton::Primary }]);
+        device_frame(&mut t, 9.0, vec![finger(7, TouchPhase::Start, 400.0, 300.0)]);
+        assert!(t.camera_active(), "a reused id is not ignored forever");
     }
 
     // ---- the app: what the gestures do to the camera and the menus ----
