@@ -1088,13 +1088,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Panels.
         let tab = app.ui.tab.clone();
         // The command whose tool or dialog is open right now, shown pressed in the toolbar.
-        let running: Option<String> = match (&app.tool, &app.dialog) {
-            (Some(tool), _) => Some(tool.cmd.to_string()),
-            // Create Sketch never lands in last_command (it is not repeatable).
-            (None, Some(d)) if matches!(d.kind, crate::dialogs::Kind::Sketch) => Some("sketch.create".to_string()),
-            (None, Some(_)) => app.last_command.as_ref().map(|(id, _)| id.clone()),
-            _ => None,
-        };
+        let running = running(app);
         let mut px = ribbon_left;
         let top = r.top() + TAB_ROW_HEIGHT;
         let mut drop: Option<(&'static str, &'static str, Option<&'static str>)> = None;
@@ -1273,8 +1267,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let tr_label = app.tr_label(selected.label).to_string();
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled() && info.enabled, &tr_label));
                 if ribbon_tooltip(app, resp, selected, info.disabled_reason.as_deref()).clicked() && info.enabled {
-                    let id = selected.id;
-                    app.start(id);
+                    press(app, selected.id);
                 }
                 if let Some(f) = family {
                     let ar = if labels {
@@ -1366,7 +1359,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         menu = Some((resp.interact_pointer_pos().unwrap_or(cell.left_bottom()), c.id));
                     }
                     if ribbon_tooltip(app, resp, c, info.disabled_reason.as_deref()).clicked() && info.enabled {
-                        app.start(c.id);
+                        press(app, c.id);
                     }
                 }
             }
@@ -1488,7 +1481,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                                         RowAction::Menu(at) => menu = Some((at, c.id)),
                                         RowAction::TogglePin => toggle = Some(c.id),
                                         RowAction::Start => {
-                                            app.start(c.id);
+                                            press(app, c.id);
                                             ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
                                         }
                                     }
@@ -1528,7 +1521,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                                 let response = crate::ui_kit::command_menu_button(ui, c.id, c.label, c.icon, c.shortcut.unwrap_or(""), info.enabled);
                                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), response.rect.center());
                                 if response.clicked() {
-                                    app.start(c.id);
+                                    press(app, c.id);
                                     ui.close();
                                 }
                             }
@@ -1611,6 +1604,30 @@ enum RowAction {
 const ROW_H: f32 = 30.0;
 
 const CONSTRAINT_GRID_WIDTH: f32 = 82.0;
+
+/// The command whose tool or dialog is open right now (shown pressed in the toolbar).
+pub(crate) fn running(app: &SolveApp) -> Option<String> {
+    match (&app.tool, &app.dialog) {
+        (Some(tool), _) => Some(tool.cmd.to_string()),
+        // Create Sketch never lands in last_command (it is not repeatable).
+        (None, Some(d)) if matches!(d.kind, crate::dialogs::Kind::Sketch) => Some("sketch.create".to_string()),
+        (None, Some(_)) => app.last_command.as_ref().map(|(id, _)| id.clone()),
+        _ => None,
+    }
+}
+
+/// A press on a toolbar or palette button. The button of the tool or dialog already open
+/// finishes it, as Esc does (a tool ends, a dialog is cancelled), so a tablet with no keyboard
+/// can leave a tool; any other button starts its command.
+pub(crate) fn press(app: &mut SolveApp, id: &str) {
+    if running(app).as_deref() != Some(id) {
+        app.start(id);
+    } else if app.tool.is_some() {
+        crate::tools::finish(app);
+    } else if app.dialog.is_some() {
+        crate::dialogs::cancel(app);
+    }
+}
 
 /// Registry parameter syntax is not a user-facing description. Reuse existing catalog prose
 /// where present; other commands intentionally show only their name and registered shortcut.
@@ -1848,7 +1865,7 @@ fn sketch_menu_rows(
             RowAction::Menu(at) => *menu = Some((at, c.id)),
             RowAction::TogglePin => *toggle = Some(c.id),
             RowAction::Start => {
-                app.start(c.id);
+                press(app, c.id);
                 ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
                 ui.close();
             }
@@ -3069,5 +3086,41 @@ mod fill_width_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod press_tests {
+    use serde_json::json;
+
+    /// A tablet has no Esc: pressing the button of the tool in use puts it down (#touch).
+    #[test]
+    fn a_second_press_on_the_active_tools_button_finishes_it() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.settle();
+        let line = json!({"click": {"handle": "toolbar:sketch.line"}});
+        h.step(&line).unwrap();
+        h.settle();
+        assert_eq!(h.app.tool.as_ref().map(|t| t.cmd), Some("sketch.line"), "the first press starts the tool");
+        h.step(&line).unwrap();
+        h.settle();
+        assert!(h.app.tool.is_none(), "the second press puts it down");
+        assert!(h.app.session.active_sketch.is_some(), "the sketch stays open");
+        h.step(&line).unwrap();
+        h.settle();
+        assert!(h.app.tool.is_some(), "a third press starts it again");
+
+        // Another tool's button switches tools, as before.
+        super::press(&mut h.app, "sketch.circle.center");
+        assert_eq!(h.app.tool.as_ref().map(|t| t.cmd), Some("sketch.circle.center"));
+
+        // A dialog's button cancels the dialog the same way.
+        h.app.finish_sketch();
+        h.settle();
+        super::press(&mut h.app, "sketch.create");
+        assert!(h.app.dialog.is_some());
+        super::press(&mut h.app, "sketch.create");
+        assert!(h.app.dialog.is_none());
     }
 }

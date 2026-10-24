@@ -199,8 +199,10 @@ On a tablet or touchscreen (in the browser, a pen and fingers are told apart):
   anything.
 - **Fingers elsewhere** (toolbar, panels, menus, dialogs, the view cube and the navigation bar):
   a finger is the mouse. Hold it on a control for that control's menu.
-- **Larger controls:** while you use touch or a pen, the interface is drawn larger, and returns
-  to its size when you use the mouse (Preferences › Interface › Larger controls for touch and
-  pen).
+- **Number pad:** while you use touch or a pen, a value field that has the keyboard (a
+  dimension's value, a tool's length or angle, a dialog's distance) gets a number pad under it:
+  digits, `.`, `+ − × ÷ ( )`, backspace and Enter. Its top row shows what you typed; drag it
+  there to move the pad out of the way, and it stays where you put it.
+- **Leaving a tool:** press its toolbar button again (the same as Esc).
 
 In the desktop app a pen counts as a finger, as the system reports it.

@@ -94,7 +94,6 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     }
                 });
                 ui_kit::text(ui, app.tr("prefs.scale_note"), ui_kit::Text::Hint("scale"));
-                setting::touch_controls(app, ui);
                 app.preferences.ui_scale
             },
             ui_kit::scale_specimen,

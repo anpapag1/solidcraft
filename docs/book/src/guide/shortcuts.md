@@ -44,6 +44,7 @@ Mouse and touch:
 | Touchscreen: one finger in the 3D view / two fingers | orbit / pan and pinch to zoom |
 | Touchscreen: two-finger tap / three-finger tap | undo / redo |
 | Pen: barrel button, or hold the pen (or a finger on a control) still | right-click menu |
+| Press the active tool's toolbar button again | leave the tool (as Esc) |
 | Double-click a sketch curve or edge | select its chain or tangent loop |
 | Double-click the middle button | go Home: the home view, framing everything shown (Preferences › Navigation › Middle double-click: Home, Fit or Off) |
 

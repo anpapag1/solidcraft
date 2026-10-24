@@ -516,7 +516,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         toggle_construction(app);
     }
     if let Some(id) = start {
-        app.start(id);
+        crate::toolbar::press(app, id);
     }
     if tie && let Err(error) = app.run("sketch.loose_ends.tie", json!({})) {
         app.set_status(error, true);

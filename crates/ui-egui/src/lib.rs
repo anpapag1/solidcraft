@@ -79,6 +79,7 @@ pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
+pub(crate) mod keypad;
 mod linked_source;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
@@ -1549,6 +1550,7 @@ impl SolveApp {
         let camera_at = |p: egui::Pos2| {
             rect.is_some_and(|r| r.contains(p))
                 && !covered.iter().chain(&controls).any(|c| c.contains(p))
+                && !keypad::covers(p)
                 && layer.is_none_or(|l| ctx.layer_id_at(p).is_none_or(|at| at == l))
         };
         self.touch.device_input(raw, events, &camera_at);
@@ -1560,6 +1562,12 @@ impl SolveApp {
     /// Inject synthetic events (one pointer event per frame).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
         self.touch.emulated_input(raw);
+        self.inject_synthetic(raw);
+        // Last, so a press on the number pad from any source types instead of clicking.
+        keypad::filter(raw);
+    }
+
+    fn inject_synthetic(&mut self, raw: &mut egui::RawInput) {
         if self.synthetic.is_empty() {
             return;
         }
@@ -1635,6 +1643,7 @@ impl SolveApp {
         if !self.home.open {
             agent_cursor::paint(self, ui.ctx());
         }
+        keypad::show(self, ui.ctx());
         if self.file_picker_busy() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }

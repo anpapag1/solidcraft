@@ -38,8 +38,6 @@ const TAP_SLOP: f32 = 14.0;
 const PALM_WINDOW: f64 = 0.6;
 /// At most this many fingers are tracked; more are ignored (hostile input stays bounded).
 const MAX_TOUCHES: usize = 10;
-/// Larger controls while touch or a pen is in use (Preferences › Interface).
-pub(crate) const TOUCH_SCALE: f32 = 1.3;
 
 /// One pen or finger event, from a platform that tells them apart. Positions are in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,7 +121,7 @@ pub struct Touch {
     router: Router,
     /// A pen has been used: finger taps on the 3D view no longer select.
     pub(crate) pen_seen: bool,
-    /// Touch or a pen is in use (no mouse since): controls are drawn larger.
+    /// Touch or a pen is in use (no mouse since): fields get the on-screen number pad.
     pub(crate) in_use: bool,
     /// The camera page drawn last frame: its rectangle, egui layer, and the parts of it that are
     /// controls (the axis view, the navigation bar), where a finger is the mouse.
@@ -136,6 +134,7 @@ pub struct Touch {
 
 impl Touch {
     /// Fingers are moving the camera.
+    #[cfg(test)]
     pub(crate) fn camera_active(&self) -> bool {
         matches!(self.router.route, Route::Camera { .. })
     }
@@ -1073,23 +1072,5 @@ mod tests {
         f.frame(vec![finger(1, TouchPhase::End, c.x - 30.0, c.y), finger(2, TouchPhase::End, c.x + 30.0, c.y)]);
         f.frame(vec![]);
         assert_ne!(f.h.app.session.revision, revision, "the tap undid the last step");
-    }
-
-    #[test]
-    fn touch_draws_larger_controls_until_the_mouse_is_used() {
-        let mut f = Frames::new();
-        f.frame(vec![]);
-        assert!((f.h.ctx.zoom_factor() - 1.0).abs() < 1e-4, "starts at {} (in use: {})", f.h.ctx.zoom_factor(), f.h.app.touch.in_use);
-        let c = f.centre();
-        f.frame(vec![finger(1, TouchPhase::Start, c.x, c.y)]);
-        f.frame(vec![finger(1, TouchPhase::End, c.x, c.y)]);
-        for _ in 0..5 {
-            f.frame(vec![]);
-        }
-        assert!((f.h.ctx.zoom_factor() - super::TOUCH_SCALE).abs() < 1e-4, "{}", f.h.ctx.zoom_factor());
-        f.h.app.preferences.touch_controls = false;
-        f.frame(vec![]);
-        f.frame(vec![]);
-        assert!((f.h.ctx.zoom_factor() - 1.0).abs() < 1e-4);
     }
 }

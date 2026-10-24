@@ -121,6 +121,10 @@ pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut Stri
     if !ctx.memory(|m| m.has_focus(resp.id)) && pressed_row.is_none() {
         return false;
     }
+    // A value field with the keyboard: on a touchscreen the number pad types into it.
+    if ctx.memory(|m| m.has_focus(resp.id)) {
+        crate::keypad::offer(resp, text);
+    }
     let state = egui::TextEdit::load_state(&ctx, resp.id);
     let cursor = state.as_ref().and_then(|s| s.cursor.char_range()).map(|r| r.primary.index.0).unwrap_or_else(|| text.chars().count());
     let (start, word) = word_before(text, cursor);
