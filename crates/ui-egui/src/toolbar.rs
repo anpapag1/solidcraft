@@ -397,6 +397,11 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             x += step;
         }
+        // Touch or a pen in use: the on-screen modifier keys sit beside Undo and Redo.
+        if app.touch.in_use && !app.native_file_menu {
+            crate::modifier_keys::bar_button(app, ui, r, x, if compact_actions { 22.0 } else { 32.0 });
+            x += step;
+        }
         if file {
             app.ui.palette_open = false;
             let ctx = ui.ctx().clone();
@@ -501,6 +506,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
     file_menu(app, ui.ctx());
     let help_x = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::new("sc_help_anchor")).unwrap_or(300.0));
     crate::help::show(app, &ui.ctx().clone(), pos2(help_x - 14.0, APP_BAR_HEIGHT));
+    crate::modifier_keys::show_menu(app, &ui.ctx().clone());
 }
 
 /// File, edit and application actions shared by the in-window and native menus.

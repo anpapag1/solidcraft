@@ -158,6 +158,7 @@ pub(crate) mod display_lod;
 mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
+pub(crate) mod modifier_keys;
 pub mod mouse_gesture;
 pub(crate) mod navigation;
 pub use navigation::WebWheelGestures;
@@ -1570,6 +1571,8 @@ impl SolveApp {
         self.inject_synthetic(raw);
         // Last, so a press on the number pad from any source types instead of clicking.
         keypad::filter(raw);
+        // After the pad, so its taps are never modified; before egui reads anything.
+        self.touch.keys.apply(raw, self.touch.in_use);
     }
 
     fn inject_synthetic(&mut self, raw: &mut egui::RawInput) {

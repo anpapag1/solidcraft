@@ -130,6 +130,9 @@ pub struct Touch {
     pub(crate) camera_controls: Vec<Rect>,
     /// The keyboard's modifiers, as last reported (a pen click keeps Shift or Ctrl).
     mods: egui::Modifiers,
+    /// The on-screen modifier keys (Shift, Ctrl / Cmd, Alt, Space, Escape): latched keys ride
+    /// on all input ([`crate::modifier_keys`]).
+    pub(crate) keys: crate::modifier_keys::State,
 }
 
 impl Touch {

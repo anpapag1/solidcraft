@@ -216,6 +216,12 @@ On a tablet or touchscreen (in the browser, a pen and fingers are told apart):
   dimension's value, a tool's length or angle, a dialog's distance) gets a number pad under it:
   digits, `.`, `+ − × ÷ ( )`, backspace and Enter. Its top row shows what you typed; drag it
   there to move the pad out of the way, and it stays where you put it.
+- **Modifier keys:** while you use touch or a pen, a keycap button with a drop-down caret appears
+  on the application bar beside Undo and Redo. Its menu has **Shift**, **Ctrl / Cmd**, **Alt** and
+  **Space**, which latch: tap one to hold it down, tap it again to let it go (a tick shows what is
+  held, and the button turns blue while any key is held). A held key rides on every click, drag
+  and key press, so Shift adds to a selection and Ctrl toggles one, with the pen or a finger.
+  **Escape** is a single press. Picking up the mouse lets every held key go.
 - **Leaving a tool:** press its toolbar button again (the same as Esc).
 - **Debug log:** Preferences › Interface › Show the debug log (or add `?debug` to the browser's
   address) puts a small badge in the 3D view's bottom-left corner. Tap it for the latest
